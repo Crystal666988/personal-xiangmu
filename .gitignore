@@ -1,0 +1,40 @@
+# 敏感配置与密钥隔离
+.env
+.env.local
+.env.*.local
+application-my.yaml
+application-prod.yaml
+application-secret.yaml
+*.pem
+*.key
+*.p12
+
+# Java 构建与 IDE 产物
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# Node / 前端构建产物
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 日志与临时文件
+*.log
+logs/
+temp/
+tmp/
+.DS_Store
+Thumbs.db
