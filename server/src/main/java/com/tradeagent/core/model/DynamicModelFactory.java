@@ -142,4 +142,30 @@ public class DynamicModelFactory implements ApplicationContextAware {
         // 2. 切断引用，提示 JVM GC 回收对象及其关联的底层 HTTP Client 连接池
         log.info("【内存泄漏防御】完成连接池解绑与孤儿对象回收准备.");
     }
+
+    /**
+     * 校验模型配置是否合法 (1-Token 极速探针法)
+     *
+     * @param config 待测试的模型配置
+     * @return true 代表连接正常，false 代表鉴权失败或网络不可达
+     */
+    public boolean testConnection(ModelConfig config) {
+        log.info("【模型配置测试】正在向 {} 发起 1-Token 极简探针测试...", config.getBaseUrl());
+        try {
+            OpenAiApi testApi = new OpenAiApi(config.getBaseUrl(), config.getApiKey());
+            OpenAiChatOptions options = OpenAiChatOptions.builder()
+                    .withModel(config.getModelName())
+                    .withMaxTokens(1)      // 只消耗 1 个 Token，成本几乎为 0
+                    .withTemperature(0.0)
+                    .build();
+            OpenAiChatModel testModel = new OpenAiChatModel(testApi, options);
+            String probeResult = testModel.call("ping");
+            boolean success = probeResult != null;
+            log.info("【模型配置测试】探针测试完成, 结果: {}", success ? "SUCCESS" : "EMPTY");
+            return success;
+        } catch (Exception e) {
+            log.warn("【模型配置测试】连接失败, 错误信息: {}", e.getMessage());
+            return false;
+        }
+    }
 }
