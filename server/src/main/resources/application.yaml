@@ -1,0 +1,58 @@
+server:
+  port: ${SERVER_PORT:48050}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: tradeagent-server
+  profiles:
+    active: local
+
+  # 禁用默认的静态 OpenAI 自动装配，交由自研 DynamicModelFactory 动态治理与缓存
+  ai:
+    openai:
+      chat:
+        enabled: false
+
+  # 数据源配置（脱敏，优先从系统环境变量读取，默认本地）
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:${MYSQL_PORT:3306}/${MYSQL_DB:trade_agent_db}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:123456}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      validation-query: SELECT 1
+
+  # Redis 缓存与原子限流
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: 0
+      timeout: 3000ms
+
+# MyBatis-Plus 严格规范（坚决禁用二级缓存）
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false # 严格禁用 MyBatis 二级缓存，规避分布式集群脏读
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# Knife4j 接口文档
+knife4j:
+  enable: true
+  openapi:
+    title: TradeAgent AI 智能体平台接口文档
+    description: 工业级外贸全链路 AI 获客与多 Agent 协同系统
+    version: 1.0.0
