@@ -92,7 +92,7 @@ public class DynamicModelFactory implements ApplicationContextAware {
         // 2. 组装采样参数与模型选项
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .withModel(config.getModelName())
-                .withTemperature(config.getTemperature())
+                .withTemperature(config.getTemperature() != null ? config.getTemperature().floatValue() : 0.7f)
                 .withMaxTokens(config.getMaxTokens())
                 .build();
 
@@ -111,6 +111,21 @@ public class DynamicModelFactory implements ApplicationContextAware {
     }
 
     /**
+     * 主动驱逐模型（按租户驱逐全部用途模型）
+     *
+     * @param tenantId 租户ID
+     */
+    public void evictTenantModel(Long tenantId) {
+        String prefix = tenantId + ":";
+        registeredBeanNames.keySet().stream()
+                .filter(key -> key.startsWith(prefix))
+                .forEach(key -> {
+                    log.info("【动态模型工厂】接收到租户主动失效指令, 驱逐 Key: {}", key);
+                    modelCache.invalidate(key);
+                });
+    }
+
+    /**
      * 主动驱逐模型（租户更新密钥、切换模型提供商时调用）
      *
      * @param tenantId 租户ID
@@ -124,6 +139,41 @@ public class DynamicModelFactory implements ApplicationContextAware {
                     log.info("【动态模型工厂】接收到主动失效指令, 驱逐 Key: {}", key);
                     modelCache.invalidate(key);
                 });
+    }
+
+    /**
+     * 便捷获取租户默认模型
+     *
+     * @param tenantId 租户ID
+     * @return 对应的 ChatModel
+     */
+    public ChatModel getModel(Long tenantId) {
+        ModelConfig defaultConfig = ModelConfig.builder()
+                .tenantId(tenantId)
+                .usageType("DEFAULT")
+                .provider("openai")
+                .modelName("gpt-4o-mini")
+                .baseUrl("https://api.openai.com/v1")
+                .apiKey("sk-trade-agent-mock-key")
+                .temperature(0.7)
+                .build();
+        return getOrCreateChatModel(defaultConfig);
+    }
+
+    /**
+     * 预热并探活模型
+     *
+     * @param tenantId 租户ID
+     * @param config 模型配置
+     * @return 探活结果
+     */
+    public boolean warmUpModel(Long tenantId, ModelConfig config) {
+        config.setTenantId(tenantId);
+        if (config.getUsageType() == null) {
+            config.setUsageType("DEFAULT");
+        }
+        getOrCreateChatModel(config);
+        return testConnection(config);
     }
 
     /**
@@ -156,7 +206,7 @@ public class DynamicModelFactory implements ApplicationContextAware {
             OpenAiChatOptions options = OpenAiChatOptions.builder()
                     .withModel(config.getModelName())
                     .withMaxTokens(1)      // 只消耗 1 个 Token，成本几乎为 0
-                    .withTemperature(0.0)
+                    .withTemperature(0.0f)
                     .build();
             OpenAiChatModel testModel = new OpenAiChatModel(testApi, options);
             String probeResult = testModel.call("ping");

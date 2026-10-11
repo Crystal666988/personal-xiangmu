@@ -196,6 +196,21 @@ cd web
 pnpm install
 pnpm dev
 ```
+前端默认运行于 `http://localhost:5173`，自动反向代理至后端 `http://127.0.0.1:48050`。
+访问 `http://localhost:5173/platform/trade-workbench` 即可体验出海外贸全景智能体工作台！
+
+---
+
+## 🖥️ 前端外贸智能体工作台 (TradeAgent Workbench)
+
+前端工程采用 **Vue 3.5 + Vite + TDesign + Pinia**，基于 WeKnora 开源知识库与 Agent 架构深度定制，内置 6 大高保真交互功能模块：
+
+1. **动态模型热切换与探活面板 (Model Hot-Swap)**：支持 DeepSeek、OpenAI、Qwen、Ollama 运行时动态切换，实时触发 1-Token 极简探针，展示 Spring Bean 销毁与 Guava 缓存驱逐；
+2. **B2B 外贸客户画像透视镜 (Profile Inspector)**：可视化展示 CIF/FOB 贸易条款、T/T 结算比例、CE/UL/TUV 认证及采购量全景画像；
+3. **自然语言 4 级拓客编译器 (NL Prospect Compiler)**：支持将销售口语需求解析为标准化 AST，并通过 SPI 通道（Google Maps / LinkedIn / Facebook / WhatsApp）执行插件式拓客采集；
+4. **营销触达分布式 Saga 编排看板 (Campaign Saga)**：实时演示 `Semaphore(3)` 配额限流门禁、违禁词静态拦截与逆向扣减补偿回滚状态；
+5. **Plan-and-Execute 深度长文创作 (Article Generator)**：两阶段大纲规划与章节并发创作，集成 Redis Hash 断点存档点；
+6. **IM 会话 SSE 实时流式打字机 (SSE Chat Stream)**：基于 Reactive Streams 与 `ServerSentEvent`，支持 `X-Accel-Buffering: no` 实时打字效果与客户端主动中断止损（`doOnCancel`）。
 
 ---
 
