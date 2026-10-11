@@ -79,4 +79,23 @@ public class ConversationContextManager {
         log.info("【上下文交接器】平滑交接完成，总共组装消息块: {} 个，准备投递至新模型", handoverMessages.size());
         return new Prompt(handoverMessages);
     }
+
+    private final java.util.Map<Long, CustomerProfile> profileMap = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public CustomerProfile getProfile(Long conversationId) {
+        return profileMap.computeIfAbsent(conversationId, id -> CustomerProfile.builder()
+                .companyName("Nordic Solar Solutions GmbH")
+                .country("德国 · 汉堡")
+                .tradeTerms("CIF Hamburg")
+                .paymentTerms("T/T 30% deposit, 70% against B/L")
+                .requiredCertificates("CE, TUV, RoHS")
+                .purchaseVolume("500 PCS / 12 TEU")
+                .build());
+    }
+
+    public void updateProfile(Long conversationId, CustomerProfile profile) {
+        if (profile != null) {
+            profileMap.put(conversationId, profile);
+        }
+    }
 }
