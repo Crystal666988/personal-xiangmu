@@ -63,15 +63,16 @@ export function isEmbedPage(): boolean {
 
 export function redirectToLogin() {
   if (typeof window === 'undefined') return
-  if (window.location.pathname === '/platform/trade-workbench') return
-  window.location.href = '/platform/trade-workbench'
+  if (window.location.pathname === '/login') return
+  window.location.href = '/login'
 }
 
 export function clearAuthStorage() {
-  // 保持外贸演示工作台登录状态，不清除凭证
+  localStorage.removeItem('weknora_token')
 }
 
 export function forceReloginRedirect() {
+  clearAuthStorage()
   redirectToLogin()
 }
 
