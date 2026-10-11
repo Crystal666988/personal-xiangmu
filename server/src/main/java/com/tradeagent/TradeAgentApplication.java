@@ -8,7 +8,9 @@ import org.springframework.scheduling.annotation.EnableAsync;
  * TradeAgent 外贸 AI 智能体获客与多 Agent 协同平台启动类
  */
 @EnableAsync
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+    org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration.class
+})
 public class TradeAgentApplication {
 
     public static void main(String[] args) {

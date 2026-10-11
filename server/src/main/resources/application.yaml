@@ -12,7 +12,10 @@ spring:
   # 禁用默认的静态 OpenAI 自动装配，交由自研 DynamicModelFactory 动态治理与缓存
   ai:
     openai:
+      api-key: ${OPENAI_API_KEY:mock-local-key}
       chat:
+        enabled: false
+      embedding:
         enabled: false
 
   # 数据源配置（脱敏，优先从系统环境变量读取，默认本地）
