@@ -173,4 +173,53 @@ public class TradePlatformCompatibilityController {
         map.put("pending_count", 0);
         return ApiResponse.success(map);
     }
+
+    /**
+     * 5. 外贸智能体统一登录鉴权
+     */
+    @PostMapping({"/auth/login", "/login"})
+    public ApiResponse<Map<String, Object>> login(@RequestBody(required = false) Map<String, String> body) {
+        String username = body != null ? body.getOrDefault("username", "admin") : "admin";
+        String role = "admin".equalsIgnoreCase(username) ? "admin" : "trader";
+        String displayName = "admin".equalsIgnoreCase(username) ? "外贸超级管理员" : "高级外贸业务经理";
+
+        log.info("【外贸鉴权】用户登录成功: {} ({})", username, displayName);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("token", "trade-agent-token-" + UUID.randomUUID().toString().substring(0, 8));
+
+        Map<String, Object> user = new HashMap<>();
+        user.put("id", "user_1001");
+        user.put("username", username);
+        user.put("name", displayName);
+        user.put("role", role);
+        user.put("tenant_id", "1001");
+        result.put("user", user);
+
+        Map<String, Object> tenant = new HashMap<>();
+        tenant.put("id", "1001");
+        tenant.put("name", "TradeAgent 外贸工作空间");
+        tenant.put("role", role);
+        result.put("tenant", tenant);
+        result.put("active_tenant", tenant);
+
+        List<Map<String, Object>> memberships = new ArrayList<>();
+        Map<String, Object> member = new HashMap<>();
+        member.put("tenant_id", 1001);
+        member.put("tenant_name", "TradeAgent 外贸工作空间");
+        member.put("role", role);
+        memberships.add(member);
+        result.put("memberships", memberships);
+
+        return ApiResponse.success(result);
+    }
+
+    /**
+     * 6. 用户注销登出
+     */
+    @PostMapping({"/auth/logout", "/logout"})
+    public ApiResponse<String> logout() {
+        log.info("【外贸鉴权】用户安全登出");
+        return ApiResponse.success("已安全登出");
+    }
 }

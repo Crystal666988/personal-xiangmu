@@ -46,18 +46,19 @@ const router = createRouter({
   routes: [
     {
       path: "/",
-      redirect: "/platform/trade-workbench",
+      redirect: "/login"
     },
     {
       path: "/login",
       name: "login",
-      redirect: "/platform/trade-workbench"
+      component: () => import("../views/auth/TradeLogin.vue"),
+      meta: { requiresAuth: false, requiresInit: false }
     },
     // Embed chat is a separate entry (embed.html + embed-main.ts), not this SPA.
     {
       path: "/register",
       name: "registerByInvite",
-      redirect: "/platform/trade-workbench"
+      redirect: "/login"
     },
     {
       path: "/onboarding/workspace",
@@ -276,13 +277,36 @@ async function hydrateSessionFromToken(authStore: ReturnType<typeof useAuthStore
 let autoSetupAttempted = false
 let liteDeepLinkRestoreDone = false
 
-// 路由守卫：免登录直接进入外贸智能体全景工作台
+// 路由守卫：按登录状态控制登录页与外贸工作台
 router.beforeEach(async (to, from, next) => {
-  // 如果访问的是根路径或旧登录/注册路径，直接重定向到外贸工作台
-  if (to.path === '/' || to.path === '/login' || to.path === '/register' || to.path === '/platform') {
-    next('/platform/trade-workbench')
+  const authStore = useAuthStore()
+
+  // 访问登录页/注册页
+  if (to.path === '/login' || to.path === '/register') {
+    if (authStore.isLoggedIn) {
+      next('/platform/trade-workbench')
+    } else {
+      next()
+    }
     return
   }
+
+  // 访问根路径或平台入口
+  if (to.path === '/' || to.path === '/platform') {
+    if (authStore.isLoggedIn) {
+      next('/platform/trade-workbench')
+    } else {
+      next('/login')
+    }
+    return
+  }
+
+  // 其他需要登录的页面
+  if (to.meta.requiresAuth !== false && !authStore.isLoggedIn) {
+    next('/login')
+    return
+  }
+
   next()
 })
 

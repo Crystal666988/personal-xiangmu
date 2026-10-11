@@ -30,16 +30,19 @@ function reloadUserPreferences() {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  // 状态：默认初始化管理员状态，免除任何登录阻断
-  const user = ref<UserInfo | null>({
-    id: 'user_1001',
-    username: 'admin',
-    name: 'TradeAgent 演示管理员',
-    email: 'admin@tradeagent.com',
-    role: 'admin',
-    avatar: '',
-    tenant_id: '1001'
-  } as any)
+  // 状态：支持标准登录校验与持久化
+  const token = ref<string>(typeof window !== 'undefined' ? (localStorage.getItem('weknora_token') || '') : '')
+  const user = ref<UserInfo | null>(
+    token.value ? {
+      id: 'user_1001',
+      username: 'admin',
+      name: 'TradeAgent 演示管理员',
+      email: 'admin@tradeagent.com',
+      role: 'admin',
+      avatar: '',
+      tenant_id: '1001'
+    } as any : null
+  )
   const tenant = ref<TenantInfo | null>({
     id: '1001',
     name: 'TradeAgent 外贸工作空间',
@@ -47,7 +50,6 @@ export const useAuthStore = defineStore('auth', () => {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   } as any)
-  const token = ref<string>('mock-trade-agent-token')
   const refreshToken = ref<string>('')
   const knowledgeBases = ref<KnowledgeBaseInfo[]>([])
   const currentKnowledgeBase = ref<KnowledgeBaseInfo | null>(null)
@@ -63,8 +65,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const autoAcceptInvitation = ref(false)
 
-  // 计算属性：直接默认已登录与拥有空间
-  const isLoggedIn = computed(() => true)
+  // 计算属性：依据 token 响应式判断登录状态
+  const isLoggedIn = computed(() => !!token.value && token.value.trim().length > 0)
 
   const hasValidTenant = computed(() => true)
 
