@@ -51,20 +51,13 @@ const router = createRouter({
     {
       path: "/login",
       name: "login",
-      component: () => import("../views/auth/Login.vue"),
-      meta: { requiresAuth: false, requiresInit: false }
+      redirect: "/platform/trade-workbench"
     },
     // Embed chat is a separate entry (embed.html + embed-main.ts), not this SPA.
     {
       path: "/register",
       name: "registerByInvite",
-      // Share-link landing page reuses the Login form: the same Vue
-      // component renders both modes and detects ?token=xxx on mount
-      // to switch into invite-register flow. Avoids a parallel page
-      // that would duplicate the OIDC / language-switch / styling
-      // surface for one extra field.
-      component: () => import("../views/auth/Login.vue"),
-      meta: { requiresAuth: false, requiresInit: false }
+      redirect: "/platform/trade-workbench"
     },
     {
       path: "/onboarding/workspace",
@@ -94,9 +87,9 @@ const router = createRouter({
     {
       path: "/platform",
       name: "Platform",
-      redirect: "/platform/knowledge-bases",
+      redirect: "/platform/trade-workbench",
       component: () => import("../views/platform/index.vue"),
-      meta: { requiresInit: true, requiresAuth: true },
+      meta: { requiresInit: false, requiresAuth: false },
       children: [
         {
           path: "tenant",
@@ -283,127 +276,13 @@ async function hydrateSessionFromToken(authStore: ReturnType<typeof useAuthStore
 let autoSetupAttempted = false
 let liteDeepLinkRestoreDone = false
 
-// 路由守卫：检查认证状态和系统初始化状态
+// 路由守卫：免登录直接进入外贸智能体全景工作台
 router.beforeEach(async (to, from, next) => {
-  const authStore = useAuthStore()
-
-  // OIDC 回跳登录结果依赖 App.vue 在挂载后消费 URL hash。
-  // 如果这里先按“未登录”拦截到 /login，会导致回调结果没有机会落盘。
-  if (hasPendingOIDCCallback()) {
-    next()
+  // 如果访问的是根路径或旧登录/注册路径，直接重定向到外贸工作台
+  if (to.path === '/' || to.path === '/login' || to.path === '/register' || to.path === '/platform') {
+    next('/platform/trade-workbench')
     return
   }
-
-  // Preserve bookmarks for tools that have moved out of Settings.
-  if (to.path === '/platform/settings' && isToolboxSection(to.query.section)) {
-    next({ ...toolboxLocation(to.query.section,
-      typeof to.query.sandboxId === 'string' ? to.query.sandboxId : undefined), replace: true })
-    return
-  }
-
-  // Lite：硬刷新后若落在默认首页，恢复本次会话中最后访问的 /platform 子路径
-  if (!liteDeepLinkRestoreDone) {
-    liteDeepLinkRestoreDone = true
-    if (isLiteEdition(authStore)) {
-      const saved = sessionStorage.getItem(LITE_LAST_PATH_KEY)
-      if (saved && isSafeLiteRestoreTarget(saved) && isLiteSpaDefaultEntry(to)) {
-        if (saved !== to.fullPath) {
-          next(saved)
-          return
-        }
-      }
-    }
-  }
-
-  // Tenantless onboarding still requires a valid user token even though it
-  // deliberately skips the normal tenant/system-initialization gates.
-  if (to.path === '/onboarding/workspace') {
-    if (!authStore.isLoggedIn) {
-      const restored = await hydrateSessionFromToken(authStore)
-      if (!restored) {
-        next('/login')
-        return
-      }
-    }
-    if (authStore.hasValidTenant) {
-      next('/platform/knowledge-bases')
-    } else {
-      next()
-    }
-    return
-  }
-
-  // 如果访问的是登录页面或初始化页面，直接放行
-  if (to.meta.requiresAuth === false || to.meta.requiresInit === false) {
-    // 如果已登录用户访问登录页面，重定向到知识库列表页面
-    if (to.path === '/login' && authStore.isLoggedIn) {
-      next(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
-      return
-    }
-    next()
-    return
-  }
-
-  // 检查用户认证状态
-  if (to.meta.requiresAuth !== false) {
-    if (!authStore.isLoggedIn) {
-      const restored = await hydrateSessionFromToken(authStore)
-      if (restored) {
-        next(
-          !authStore.hasValidTenant && to.meta.requiresTenant !== false
-            ? '/onboarding/workspace'
-            : to.fullPath,
-        )
-        return
-      }
-
-      if (!autoSetupAttempted) {
-        autoSetupAttempted = true
-        localStorage.removeItem('weknora_auto_setup_failed')
-        try {
-          const response = await autoSetup()
-          if (response.success) {
-            persistLoginResponse(authStore, response)
-            authStore.setLiteMode(true)
-            next(to.fullPath)
-            return
-          }
-        } catch {
-          // Auto-setup may be unavailable outside the native Lite shell.
-        }
-      }
-      next('/login')
-      return
-    }
-  }
-
-  if (to.meta.requiresTenant !== false && !authStore.hasValidTenant) {
-    next('/onboarding/workspace')
-    return
-  }
-
-  // 部署能力只描述“后端是否提供该功能”，不反映服务健康或是否已配置。
-  // 探测失败时 Store 会 fail-open，真正的权限和可用性仍由后端接口校验。
-  const deploymentCapabilities = useDeploymentCapabilitiesStore()
-  await deploymentCapabilities.ensureLoaded()
-  const requiredCapability = to.meta.requiredCapability as DeploymentCapabilityKey | undefined
-  if (requiredCapability && !deploymentCapabilities.isSupported(requiredCapability)) {
-    MessagePlugin.warning(i18n.global.t('settings.capabilityUnavailable'))
-    next('/platform/knowledge-bases')
-    return
-  }
-
-  // SystemAdmin gate — checked AFTER auth so a non-admin who's logged
-  // out gets redirected to /login first (consistent with how the rest
-  // of the auth flow works), and only an authenticated non-admin sees
-  // the bounce. This is UI-only; the server enforces the real check.
-  if (to.meta.requiresSystemAdmin === true) {
-    if (!authStore.isSystemAdmin) {
-      next('/platform/knowledge-bases')
-      return
-    }
-  }
-
   next()
 })
 
