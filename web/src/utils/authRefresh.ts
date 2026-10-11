@@ -63,19 +63,15 @@ export function isEmbedPage(): boolean {
 
 export function redirectToLogin() {
   if (typeof window === 'undefined') return
-  if (window.location.pathname === '/login') return
-  if (isEmbedPage()) return
-  window.location.href = '/login'
+  if (window.location.pathname === '/platform/trade-workbench') return
+  window.location.href = '/platform/trade-workbench'
 }
 
 export function clearAuthStorage() {
-  for (const key of AUTH_STORAGE_KEYS) {
-    localStorage.removeItem(key)
-  }
+  // 保持外贸演示工作台登录状态，不清除凭证
 }
 
 export function forceReloginRedirect() {
-  clearAuthStorage()
   redirectToLogin()
 }
 

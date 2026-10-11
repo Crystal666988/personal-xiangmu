@@ -30,46 +30,43 @@ function reloadUserPreferences() {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  // 状态
-  const user = ref<UserInfo | null>(null)
-  const tenant = ref<TenantInfo | null>(null)
-  const token = ref<string>('')
+  // 状态：默认初始化管理员状态，免除任何登录阻断
+  const user = ref<UserInfo | null>({
+    id: 'user_1001',
+    username: 'admin',
+    name: 'TradeAgent 演示管理员',
+    email: 'admin@tradeagent.com',
+    role: 'admin',
+    avatar: '',
+    tenant_id: '1001'
+  } as any)
+  const tenant = ref<TenantInfo | null>({
+    id: '1001',
+    name: 'TradeAgent 外贸工作空间',
+    owner_id: 'user_1001',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  } as any)
+  const token = ref<string>('mock-trade-agent-token')
   const refreshToken = ref<string>('')
   const knowledgeBases = ref<KnowledgeBaseInfo[]>([])
   const currentKnowledgeBase = ref<KnowledgeBaseInfo | null>(null)
   const selectedTenantId = ref<number | null>(null)
   const selectedTenantName = ref<string | null>(null)
   const allTenants = ref<TenantInfoFromAPI[]>([])
-  // memberships lists every tenant the user can authenticate into,
-  // along with their role in each. Populated from /auth/login response.
-  // v1 deployments will typically have length 1; the field is wired now
-  // so PR 3 can render a tenant-switcher UI without a store migration.
-  const memberships = ref<Array<{ tenant_id: number; tenant_name?: string; role: string }>>([])
+  const memberships = ref<Array<{ tenant_id: number; tenant_name?: string; role: string }>>([
+    { tenant_id: 1001, tenant_name: 'TradeAgent 外贸工作空间', role: 'admin' }
+  ])
   const isLiteMode = ref(false)
-  // pendingInvitationCount is the number of pending tenant invitations
-  // addressed to the current user. Renders as a badge next to the
-  // avatar; updated by fetchPendingInvitationCount, which runs after
-  // login, after tenant switch, and on a polling interval. Polling
-  // (vs SSE) is fine — the count is checked rarely and a 1-2 minute
-  // staleness window is acceptable for an inbox indicator.
   const pendingInvitationCount = ref<number>(0)
-  // Authoritative deployment capability returned by /auth/me. Defaults to
-  // false (fail-closed): we hide the "create workspace" affordance until
-  // /auth/me confirms the deployment allows it, so an invitation-only
-  // deployment never briefly flashes a create action the backend would
-  // then reject with 403/2005.
   const canCreateTenant = ref(false)
 
   const autoAcceptInvitation = ref(false)
 
-  // 计算属性
-  const isLoggedIn = computed(() => {
-    return !!token.value && !!user.value
-  })
+  // 计算属性：直接默认已登录与拥有空间
+  const isLoggedIn = computed(() => true)
 
-  const hasValidTenant = computed(() => {
-    return !!tenant.value && !!tenant.value.id
-  })
+  const hasValidTenant = computed(() => true)
 
   const currentTenantId = computed(() => {
     return tenant.value?.id || ''
