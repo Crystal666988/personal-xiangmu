@@ -139,80 +139,64 @@
 
 ```text
 personal-xiangmu/
-├── docs/                      # 架构设计图、自查指南与技术解析文档
-│   ├── architecture-dag.png   # AI 决策 DAG 流水线图
-│   └── rag-table-ast.md       # RAG 表格原子化与 AST 分块技术规范
-├── docker/                    # Docker 容器化编排环境
-│   ├── docker-compose.yml     # 一键拉起 MySQL, Redis, Milvus, Web, Server
-│   └── nginx/                 # Nginx 配置文件 (包含反代与 SSE 禁缓存规则)
-├── server/                    # 后端核心工程 (Spring Boot 3 + Spring AI)
+├── server/                    # 后端核心工程 (Spring Boot 3 + Spring AI 工业级 Agent 引擎)
 │   ├── src/main/java/com/tradeagent/
-│   │   ├── core/              # 核心层: 模型工厂、动态Bean治理、DAG调度引擎
-│   │   ├── modules/ai/        # AI 业务域: RAG检索、IM画像抽取、N+4市场报告
-│   │   ├── modules/prospect/  # 拓客域: SPI 插件化采集 (Maps/FB/LN/WA)
-│   │   ├── modules/outreach/  # 触达域: Saga 补偿引擎、邮件与 WhatsApp 发送
-│   │   └── modules/feishu/    # 生态域: 飞书多维表格与文档同步适配器
+│   │   ├── core/              # 核心架构层: 多模型工厂、动态Bean治理、DAG调度引擎、会话画像上下文
+│   │   ├── modules/ai/        # AI 核心业务域: RAG检索、IM画像增量抽取、N+4长文本报告生成、视觉PDF解析
+│   │   ├── modules/prospect/  # 拓客业务域: 自然语言4级编译器、SPI 插件化多渠道采集 (Maps/FB/LN/WA)
+│   │   ├── modules/outreach/  # 触达业务域: Saga 柔性补偿事务引擎、Semaphore限流门禁、违禁词熔断拦截
+│   │   ├── modules/feishu/    # 协同生态域: 飞书多维表格 Bitable 双向同步与云文档 AST 知识库抽取
+│   │   └── modules/workbench/ # 统一 API 门面: 集中暴露 9 大核心 Agent 能力接口
 │   └── pom.xml
-├── web/                       # 前端交互工程 (Vue 3 + Vite + AntD)
-│   ├── src/
-│   │   ├── api/               # SSE 流式请求与 RESTful 接口
-│   │   ├── views/             # 拓客、市场报告、IM 聊天、AI 数字员工配置视图
-│   │   └── components/        # DAG 流程看板与富文本/表格解析组件
-│   └── package.json
-└── README.md                  # 项目主入口说明文档
+├── .env.example               # 环境变量配置模板
+├── .gitignore
+└── README.md                  # 项目全景技术文档
 ```
 
 ---
 
 ## 🚀 快速开始与本地启动
 
-### 1. 克隆仓库与配置准备
+### 1. 环境准备
+* **JDK**：Java 17+ (推荐 Eclipse Adoptium OpenJDK 17)
+* **Maven**：3.8+
+* **数据库/中间件**：MySQL 8.0+、Redis 7.0+（已内置本地降级与断点容错）
+
+### 2. 克隆仓库与配置
 ```bash
 git clone https://github.com/Crystal666988/personal-xiangmu.git
 cd personal-xiangmu
 
-# 复制环境变量模板 (无任何敏感密钥，填入您自己的本地数据库或测试 Key)
+# 复制环境变量模板 (无任何敏感密钥，填入本地环境配置)
 cp .env.example .env
 ```
 
-### 2. 方式 A：Docker Compose 一键启动 (推荐)
-```bash
-docker-compose -f docker/docker-compose.yml up -d
-```
-启动完成后访问：
-- 前端页面：`http://localhost:80`
-- 后端接口文档：`http://localhost:48050/doc.html`
-
-### 3. 方式 B：本地源码分步调试
-**后端启动 (Java 17+)**：
+### 3. 后端服务编译与启动
 ```bash
 cd server
 mvn clean package -DskipTests
-java -jar target/tradeagent-server.jar
+java -jar target/tradeagent-server-1.0.0.jar
 ```
-**前端启动 (Node 18+)**：
-```bash
-cd web
-pnpm install
-pnpm dev
-```
-前端默认运行于 `http://localhost:5173`，自动反向代理至后端 `http://127.0.0.1:48050`。
-访问 `http://localhost:5173/platform/trade-workbench` 即可体验出海外贸全景智能体工作台！
+服务默认监听端口：`http://localhost:48050`。
 
 ---
 
-## 🖥️ 前端外贸智能体工作台 (TradeAgent Workbench)
+## 🔌 核心 Agent API 接口一览
 
-前端工程采用 **Vue 3.5 + Vite + TDesign + Pinia**，基于 WeKnora 开源知识库与 Agent 架构深度定制，内置 6 大高保真交互功能模块：
+服务端采用标准化 RESTful 与 SSE 响应式流，集中暴露 9 大工业级 Agent 架构接口：
 
-1. **动态模型热切换与探活面板 (Model Hot-Swap)**：支持 DeepSeek、OpenAI、Qwen、Ollama 运行时动态切换，实时触发 1-Token 极简探针，展示 Spring Bean 销毁与 Guava 缓存驱逐；
-2. **B2B 外贸客户画像透视镜 (Profile Inspector)**：可视化展示 CIF/FOB 贸易条款、T/T 结算比例、CE/UL/TUV 认证及采购量全景画像；
-3. **自然语言 4 级拓客编译器 (NL Prospect Compiler)**：支持将销售口语需求解析为标准化 AST，并通过 SPI 通道（Google Maps / LinkedIn / Facebook / WhatsApp）执行插件式拓客采集；
-4. **营销触达分布式 Saga 编排看板 (Campaign Saga)**：实时演示 `Semaphore(3)` 配额限流门禁、违禁词静态拦截与逆向扣减补偿回滚状态；
-5. **Plan-and-Execute 深度长文创作 (Article Generator)**：两阶段大纲规划与章节并发创作，集成 Redis Hash 断点存档点；
-6. **IM 会话 SSE 实时流式打字机 (SSE Chat Stream)**：基于 Reactive Streams 与 `ServerSentEvent`，支持 `X-Accel-Buffering: no` 实时打字效果与客户端主动中断止损（`doOnCancel`）。
-
----
+| 能力模块 | 接口地址 | 请求方式 | 核心特性说明 |
+| :--- | :--- | :---: | :--- |
+| **动态模型热插拔** | `/api/trade/model/switch` | `POST` | 多租户模型运行时切换，1-Token 极简探针，Spring Bean 销毁与连接池清理 |
+| **B2B 客户全景画像** | `/api/trade/profile/{conversationId}` | `GET` | 实时提取并聚合买家 FOB/CIF、T/T、认证与采购偏好 |
+| **自然语言 4 级编译** | `/api/trade/prospect/parse` | `POST` | 口语化销售指令精准编译为标准 AST 结构体（国家、行业、数量与约束） |
+| **SPI 插件式多通道拓客** | `/api/trade/prospect/collect` | `POST` | 运行时动态加载 Google/LinkedIn/Customs/WhatsApp 采集通道 |
+| **营销触达 Saga 编排** | `/api/trade/campaign/execute` | `POST` | `Semaphore(3)` 严苛限流门禁、违禁词熔断拦截与柔性逆向补偿 |
+| **N+4 并发市场研报** | `/api/trade/market/report` | `POST` | JSON 骨架拆分并行填充，证据白名单正则校验防数字幻觉 |
+| **Plan-and-Execute 长文** | `/api/trade/article/generate` | `POST` | 两阶段大纲规划与并发撰写，Redis Hash 存档点断点续作 |
+| **飞书多维表格集成** | `/api/trade/feishu/bitable/webhook` | `POST` | Webhook 实时触发，异步背调与结构化回写 CRM 表格 |
+| **飞书文档 AST 同步** | `/api/trade/feishu/docs/sync` | `POST` | 开放平台 AST Block API 增量解析，父子标题面包屑分块注入向量库 |
+| **SSE 实时流式对话** | `/api/trade/chat/stream` | `GET` | 打字机流式输出，`doOnCancel` 客户端断连自动中断止损 Token |
 
 ## ⚖️ 免责声明与知识产权保护
 
