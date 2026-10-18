@@ -51,9 +51,6 @@
         </div>
 
         <div class="navbar-right">
-          <el-tag type="success" size="small" effect="plain" class="status-tag">
-            Guava 缓存就绪
-          </el-tag>
           <el-dropdown trigger="click" @command="handleCommand">
             <div class="avatar-wrap">
               <el-avatar :size="32" class="user-avatar">

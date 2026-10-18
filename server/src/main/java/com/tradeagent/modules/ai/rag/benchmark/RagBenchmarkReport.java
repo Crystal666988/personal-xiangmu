@@ -40,6 +40,8 @@ public class RagBenchmarkReport {
     private Map<String, CategoryMetric> categoryMetrics;
     /** 典型 Bad-Case 抽样分析 */
     private List<BadCaseDetail> sampleBadCases;
+    /** AI 真题明细与命中详情 */
+    private List<QuestionEvaluationResult> questionResults;
 
     @Data
     @Builder
@@ -75,5 +77,24 @@ public class RagBenchmarkReport {
         private String category;
         private String reason;
         private String optimizationAction;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class QuestionEvaluationResult {
+        private String id;
+        private String question;
+        private String category;
+        private String categoryName;
+        private String groundTruthAnswer;
+        private String expectedChunkId;
+        private String expectedKeyword;
+        private List<String> retrievedChunkIds;
+        private boolean isHit;
+        private boolean isAdversarial;
+        private String retrievedSnippet;
+        private String badCaseReason;
     }
 }

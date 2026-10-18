@@ -168,3 +168,94 @@ export function uploadAndRunRagBenchmarkApi(file) {
   })
 }
 
+// ======================== 工业级两阶段知识库与真实 AI 评测接口 ========================
+
+/**
+ * 1. 获取已入库知识库文档列表 (阶段一：离线入库)
+ */
+export function getKnowledgeDocumentsApi() {
+  return request({
+    url: '/kb/documents',
+    method: 'get'
+  })
+}
+
+/**
+ * 2. 上传文档并执行真实 AST 结构化切片入库
+ * @param {File} file
+ */
+export function uploadKnowledgeDocumentApi(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request({
+    url: '/kb/documents/upload',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 60000
+  })
+}
+
+/**
+ * 3. 获取指定文档的所有切片明细 (切片透视)
+ * @param {string} docId
+ */
+export function getDocumentChunksApi(docId) {
+  return request({
+    url: `/kb/documents/${docId}/chunks`,
+    method: 'get'
+  })
+}
+
+/**
+ * 4. 删除指定知识库文档及其所有切片
+ * @param {string} docId
+ */
+export function deleteKnowledgeDocumentApi(docId) {
+  return request({
+    url: `/kb/documents/${docId}`,
+    method: 'delete'
+  })
+}
+
+/**
+ * 5. 仅执行 BM25 切片检索
+ * @param {{ question: string, docId?: string, topK?: number }} data
+ */
+export function retrieveKnowledgeChunksApi(data) {
+  return request({
+    url: '/kb/qa/retrieve',
+    method: 'post',
+    data
+  })
+}
+
+/**
+ * 6. 在线 RAG 问答 (阶段二：检索切片 + 真实大模型生成 + 来源溯源引用)
+ * @param {{ question: string, docId?: string, topK?: number, apiKey?: string, baseUrl?: string, modelName?: string }} data
+ */
+export function onlineKnowledgeAskApi(data) {
+  return request({
+    url: '/kb/qa/ask',
+    method: 'post',
+    data,
+    timeout: 60000
+  })
+}
+
+/**
+ * 7. 真实 AI 大模型阅读切片并出题评测 (阶段三：真实 AI 出题 + 真实倒排检验 + 拒绝纯正则)
+ * @param {{ docId?: string, count?: number, apiKey?: string, baseUrl?: string, modelName?: string }} data
+ */
+export function runAiSyntheticBenchmarkApi(data) {
+  return request({
+    url: '/kb/benchmark/ai-run',
+    method: 'post',
+    data,
+    timeout: 120000
+  })
+}
+
+
