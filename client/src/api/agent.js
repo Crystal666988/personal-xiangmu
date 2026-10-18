@@ -138,3 +138,33 @@ export function deleteBatchMessagesApi(sessionId, messageIds) {
     data: messageIds
   })
 }
+
+/**
+ * 运行 RAG 默认 200 题金标全自动基准测试
+ */
+export function runRagDefaultBenchmarkApi() {
+  return request({
+    url: '/vision/benchmark/run',
+    method: 'get',
+    timeout: 60000
+  })
+}
+
+/**
+ * 上传任意领域文档并运行 200 题动态逆向出题与全自动评测
+ * @param {File} file
+ */
+export function uploadAndRunRagBenchmarkApi(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request({
+    url: '/vision/benchmark/upload-and-run',
+    method: 'post',
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    },
+    timeout: 120000
+  })
+}
+
