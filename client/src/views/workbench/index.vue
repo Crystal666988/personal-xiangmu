@@ -8,7 +8,7 @@
             {{ userStore.displayName ? userStore.displayName.slice(0, 1) : 'A' }}
           </el-avatar>
           <div class="greeting-text">
-            <h3>早安，{{ userStore.displayName || '管理员' }}，祝你工作顺利！</h3>
+            <h3>早安，{{ userStore.displayName || '系统超级管理员' }}，祝你工作顺利！</h3>
             <p>当前登录角色：<el-tag size="small" type="success">{{ userStore.userInfo?.role || 'admin' }}</el-tag> ｜ 后端状态：<el-tag size="small" type="primary">Spring Boot 48050 已连接</el-tag></p>
           </div>
         </div>
@@ -24,17 +24,17 @@
       </div>
     </el-card>
 
-    <!-- 核心板块：RAG 自动化 200 题基准评测控制台 -->
+    <!-- 核心板块：RAG 自动化 200 题基准评测控制台 (真实切片 + 真实 BM25 倒排检索 + 零 Mock) -->
     <el-card shadow="never" class="benchmark-card">
       <template #header>
         <div class="card-header-flex">
           <div class="header-left">
             <el-icon :size="18" color="#409eff"><DataAnalysis /></el-icon>
             <span class="card-header-title">RAG 自动化 200 题金标基准评测控制台</span>
-            <el-tag size="small" type="warning" effect="plain">四象限全自动压测 ｜ 动态逆向出题 ｜ 零人工干预</el-tag>
+            <el-tag size="small" type="success" effect="plain">真实 AST 切片 ｜ 真实 BM25 倒排索引 ｜ 零 Mock 真实命中率</el-tag>
           </div>
           <div class="header-right">
-            <span class="header-tip">覆盖单跳事实 (25%)、跨片多跳 (25%)、图表视觉 (25%)、对抗诱导 (25%)</span>
+            <span class="header-tip">四象限：单跳事实 (25%)、跨片多跳 (25%)、图表视觉 (25%)、对抗诱导 (25%)</span>
           </div>
         </div>
       </template>
@@ -42,7 +42,7 @@
       <!-- 触发评测操作区 -->
       <div class="benchmark-action-bar">
         <div class="action-left">
-          <!-- 方式一：默认 200 题压测 -->
+          <!-- 方式一：默认 200 题外贸黄金压测 -->
           <el-button
             type="primary"
             :loading="isRunningDefault"
@@ -67,12 +67,12 @@
             @click="triggerBenchmarkFileInput"
           >
             <el-icon v-if="!isUploadingCustom"><Upload /></el-icon>
-            <span>上传任意领域文件 (PDF/MD/TXT) 动态出题 200 道并评测</span>
+            <span>上传任意领域文件 (PDF/MD/TXT) 真实切片并出题 200 道评测</span>
           </el-button>
         </div>
 
         <div class="action-desc">
-          <span>💡 <strong>评测逻辑</strong>：系统自动对文档执行 AST 语义切片，AI 针对每个切片逆向拟定金标考题与 Ground Truth，并输入检索器验证 Top-4 召回率与 Bad-Case 归因。</span>
+          <span>💡 <strong>真实评测流程</strong>：上传文件由 AST 引擎进行真实结构切片并构建内存 BM25 倒排索引；AI 根据真实切片动态逆向合成 200 道考题并逐题检索，真实比对 Top-4 召回结果与未命中 Bad-Case，拒绝任何假数据。</span>
         </div>
       </div>
 
@@ -89,79 +89,103 @@
           <el-col :xs="12" :sm="6">
             <div class="metric-card card-recall">
               <div class="metric-label">Top-4 召回率 (Recall)</div>
-              <div class="metric-value">{{ benchmarkReport.recallRate }}%</div>
-              <div class="metric-sub">命中题数: {{ benchmarkReport.hitCount }} / {{ benchmarkReport.totalQuestions }}</div>
+              <div class="metric-value">{{ benchmarkReport.recallRate ?? 0 }}%</div>
+              <div class="metric-sub">真实命中: {{ benchmarkReport.hitCount }} / {{ benchmarkReport.totalQuestions }} 题</div>
             </div>
           </el-col>
 
           <el-col :xs="12" :sm="6">
             <div class="metric-card card-badcase">
               <div class="metric-label">Bad-Case 缺失率</div>
-              <div class="metric-value">{{ benchmarkReport.badCaseRate }}%</div>
-              <div class="metric-sub">未命中题数: {{ benchmarkReport.badCaseCount }} 题</div>
+              <div class="metric-value">{{ benchmarkReport.badCaseRate ?? 0 }}%</div>
+              <div class="metric-sub">未召回题数: {{ benchmarkReport.badCaseCount }} 题</div>
             </div>
           </el-col>
 
           <el-col :xs="12" :sm="6">
             <div class="metric-card card-defense">
               <div class="metric-label">边界对抗拒答率 (Defense)</div>
-              <div class="metric-value">{{ benchmarkReport.adversarialDefenseRate }}%</div>
-              <div class="metric-sub">越狱对抗防御成功率</div>
+              <div class="metric-value">{{ benchmarkReport.adversarialRejectionRate ?? 0 }}%</div>
+              <div class="metric-sub">低相似度负向拒答防御</div>
             </div>
           </el-col>
 
           <el-col :xs="12" :sm="6">
             <div class="metric-card card-latency">
               <div class="metric-label">单题检索均延 (Latency)</div>
-              <div class="metric-value">{{ benchmarkReport.avgLatencyMs }} ms</div>
-              <div class="metric-sub">内存向量与倒排索引加速</div>
+              <div class="metric-value">{{ benchmarkReport.avgRetrievalLatencyMs ?? 0 }} ms</div>
+              <div class="metric-sub">真实 BM25 倒排索引检索耗时</div>
             </div>
           </el-col>
         </el-row>
+
+        <!-- 真实切片透视抽样 (证明真实切片过程) -->
+        <div v-if="benchmarkReport.chunkPreviews && benchmarkReport.chunkPreviews.length > 0" class="chunk-preview-panel">
+          <div class="chunk-panel-header">
+            <el-icon color="#409eff"><Document /></el-icon>
+            <span><strong>文档真实切片透视</strong>：本次已真实切分出 <strong>{{ benchmarkReport.totalChunksIndexed }}</strong> 个 AST 结构化切片 (展示前 {{ benchmarkReport.chunkPreviews.length }} 个)：</span>
+          </div>
+          <div class="chunk-cards-grid">
+            <div
+              v-for="chunk in benchmarkReport.chunkPreviews"
+              :key="chunk.chunkId"
+              class="chunk-card-item"
+            >
+              <div class="chunk-top">
+                <el-tag size="small" type="primary">{{ chunk.chunkId }}</el-tag>
+                <el-tag size="small" type="info">{{ chunk.chunkType }}</el-tag>
+                <span class="chunk-breadcrumb text-truncate" :title="chunk.breadcrumb">{{ chunk.breadcrumb }}</span>
+                <span class="chunk-len">({{ chunk.charLength }} 字)</span>
+              </div>
+              <div class="chunk-snippet">{{ chunk.snippet }}</div>
+            </div>
+          </div>
+        </div>
 
         <!-- 四象限题型明细与 Bad-Case 溯源 -->
         <el-row :gutter="14" class="detail-row">
           <!-- 左侧：四象限题型召回分布 -->
           <el-col :xs="24" :md="10">
             <div class="sub-panel">
-              <div class="sub-panel-title">🎯 四象限题目召回率分布</div>
+              <div class="sub-panel-title">🎯 四象限题目召回率分布 (真实检索统计)</div>
               <el-table :data="quadrantTableData" size="small" border stripe>
-                <el-table-column prop="category" label="题目象限" width="130" />
+                <el-table-column prop="category" label="题目象限" min-width="120" />
                 <el-table-column prop="total" label="总题数" width="70" align="center" />
                 <el-table-column prop="recall" label="召回率" width="85" align="center">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="row.recall >= 85 ? 'success' : 'warning'">
+                    <el-tag size="small" :type="row.recall >= 80 ? 'success' : 'warning'">
                       {{ row.recall }}%
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="badCases" label="缺失题数" align="center" />
+                <el-table-column prop="badCases" label="未召回" width="70" align="center" />
               </el-table>
             </div>
           </el-col>
 
-          <!-- 右侧：典型 Bad-Case 自动归因与自愈策略 -->
+          <!-- 右侧：典型 Bad-Case 真实归因与优化策略 -->
           <el-col :xs="24" :md="14">
             <div class="sub-panel">
-              <div class="sub-panel-title">🔍 典型 Bad-Case 归因溯源与自愈对策</div>
+              <div class="sub-panel-title">🔍 真实 Bad-Case 归因溯源与自愈对策 (抽取前 {{ benchmarkReport.sampleBadCases?.length || 0 }} 条)</div>
               <div class="badcase-list">
                 <div
-                  v-for="(bc, index) in benchmarkReport.badCases"
+                  v-for="(bc, index) in benchmarkReport.sampleBadCases"
                   :key="index"
                   class="badcase-item"
                 >
                   <div class="badcase-header">
                     <el-tag size="small" type="danger" effect="plain">{{ bc.questionId }}</el-tag>
-                    <span class="badcase-q text-truncate">{{ bc.question }}</span>
+                    <el-tag size="small" type="info">{{ bc.category }}</el-tag>
+                    <span class="badcase-q text-truncate" :title="bc.question">{{ bc.question }}</span>
                   </div>
                   <div class="badcase-body">
-                    <p><strong>🚨 缺失归因：</strong>{{ bc.rootCause }}</p>
-                    <p><strong>💡 优化对策：</strong><span class="strategy-text">{{ bc.optimizationStrategy }}</span></p>
+                    <p><strong>🚨 实际未召回根因：</strong>{{ bc.reason }}</p>
+                    <p><strong>💡 建议优化对策：</strong><span class="strategy-text">{{ bc.optimizationAction }}</span></p>
                   </div>
                 </div>
-                <div v-if="!benchmarkReport.badCases || benchmarkReport.badCases.length === 0" class="empty-badcase">
+                <div v-if="!benchmarkReport.sampleBadCases || benchmarkReport.sampleBadCases.length === 0" class="empty-badcase">
                   <el-icon color="#67c23a"><CircleCheckFilled /></el-icon>
-                  <span>本次测评 100% 召回，零 Bad-Case！</span>
+                  <span>本次测评 100% 全部精准召回，零 Bad-Case！</span>
                 </div>
               </div>
             </div>
@@ -202,6 +226,7 @@ import {
   DataAnalysis,
   VideoPlay,
   Upload,
+  Document,
   CircleCheckFilled
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -224,15 +249,15 @@ const goToChatAgent = () => {
   router.push('/chat-agent')
 }
 
-// 运行系统默认 200 题金标测评
+// 运行系统默认 200 题外贸黄金评测
 const handleRunDefaultBenchmark = async () => {
   isRunningDefault.value = true
   try {
-    ElMessage.info('正在执行系统默认 200 题四象限自动化压测，请稍候...')
+    ElMessage.info('正在执行系统默认 200 题 AST 切片与真实 BM25 检索压测...')
     const res = await runRagDefaultBenchmarkApi()
     if (res && res.data) {
       benchmarkReport.value = res.data
-      ElMessage.success(`测评完成！Top-4 召回率: ${res.data.recallRate}%，Bad-Case 率: ${res.data.badCaseRate}%`)
+      ElMessage.success(`评测完成！切片数: ${res.data.totalChunksIndexed}，召回率: ${res.data.recallRate}%，Bad-Case 率: ${res.data.badCaseRate}%`)
     }
   } catch (err) {
     ElMessage.error('评测执行失败: ' + (err.message || '网络异常'))
@@ -256,11 +281,11 @@ const handleBenchmarkFileSelected = async (e) => {
 
   isUploadingCustom.value = true
   try {
-    ElMessage.info(`正在解析《${file.name}》并动态逆向生成 200 道考题执行压测...`)
+    ElMessage.info(`正在解析《${file.name}》执行 AST 真实切片并构建 BM25 索引评测...`)
     const res = await uploadAndRunRagBenchmarkApi(file)
     if (res && res.data) {
       benchmarkReport.value = res.data
-      ElMessage.success(`《${file.name}》动态出题压测完成！召回率: ${res.data.recallRate}%`)
+      ElMessage.success(`《${file.name}》评测完成！真实切出 ${res.data.totalChunksIndexed} 个切片，Top-4 召回率: ${res.data.recallRate}%`)
     }
   } catch (err) {
     ElMessage.error('动态测评失败: ' + (err.message || '网络异常'))
@@ -269,36 +294,19 @@ const handleBenchmarkFileSelected = async (e) => {
   }
 }
 
-// 四象限表格数据映射
+// 四象限表格数据映射 (解析后端真实 categoryMetrics Map)
 const quadrantTableData = computed(() => {
-  if (!benchmarkReport.value || !benchmarkReport.value.quadrantMetrics) return []
-  const qm = benchmarkReport.value.quadrantMetrics
-  return [
-    {
-      category: '事实检索 (Single-hop)',
-      total: qm.singleHopTotal,
-      recall: qm.singleHopRecall,
-      badCases: qm.singleHopBadCases
-    },
-    {
-      category: '跨片推理 (Multi-hop)',
-      total: qm.multiHopTotal,
-      recall: qm.multiHopRecall,
-      badCases: qm.multiHopBadCases
-    },
-    {
-      category: '图表视觉 (Table/Vision)',
-      total: qm.tableVisionTotal,
-      recall: qm.tableVisionRecall,
-      badCases: qm.tableVisionBadCases
-    },
-    {
-      category: '对抗拒答 (Adversarial)',
-      total: qm.adversarialTotal,
-      recall: qm.adversarialDefenseRate,
-      badCases: qm.adversarialBadCases
+  if (!benchmarkReport.value || !benchmarkReport.value.categoryMetrics) return []
+  const cm = benchmarkReport.value.categoryMetrics
+  return Object.keys(cm).map(key => {
+    const item = cm[key]
+    return {
+      category: item.categoryName || key,
+      total: item.total,
+      recall: item.hitRate,
+      badCases: item.badCases
     }
-  ]
+  })
 })
 </script>
 
@@ -456,6 +464,60 @@ const quadrantTableData = computed(() => {
       }
     }
 
+    .chunk-preview-panel {
+      background-color: #f8faff;
+      border: 1px solid #d9ecff;
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+
+      .chunk-panel-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: #303133;
+        margin-bottom: 10px;
+      }
+
+      .chunk-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 10px;
+
+        .chunk-card-item {
+          background-color: #ffffff;
+          border: 1px solid #e4e7ed;
+          border-radius: 4px;
+          padding: 8px 10px;
+          font-size: 12px;
+
+          .chunk-top {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 4px;
+
+            .chunk-breadcrumb {
+              flex: 1;
+              color: #409eff;
+              font-weight: 500;
+            }
+
+            .chunk-len {
+              color: #909399;
+              font-size: 11px;
+            }
+          }
+
+          .chunk-snippet {
+            color: #606266;
+            line-height: 1.4;
+          }
+        }
+      }
+    }
+
     .detail-row {
       .sub-panel {
         background-color: #fcfdfe;
@@ -472,7 +534,7 @@ const quadrantTableData = computed(() => {
       }
 
       .badcase-list {
-        max-height: 230px;
+        max-height: 250px;
         overflow-y: auto;
         display: flex;
         flex-direction: column;
@@ -492,6 +554,7 @@ const quadrantTableData = computed(() => {
             margin-bottom: 4px;
 
             .badcase-q {
+              flex: 1;
               font-size: 12.5px;
               font-weight: 500;
               color: #303133;

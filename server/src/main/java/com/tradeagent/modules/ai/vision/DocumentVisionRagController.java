@@ -285,14 +285,28 @@ public class DocumentVisionRagController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "targetCount", defaultValue = "200") int targetCount
     ) throws IOException {
+        String fileName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "document.txt";
         log.info("【API】收到任意领域文档评测请求: {}, 大小: {} bytes, 目标用例数: {}",
-                file.getOriginalFilename(), file.getSize(), targetCount);
+                fileName, file.getSize(), targetCount);
 
-        String content = new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        String lower = fileName.toLowerCase();
+        String content;
+
+        if (lower.endsWith(".pdf")) {
+            // PDF 格式调用本地 Apache PDFBox 管道真实抽取文本
+            DocumentParseResult parseResult = pdfVisionFallbackService.parsePdfPipeline(fileName, file.getBytes(), true, null);
+            content = parseResult.getRawMarkdown();
+            if (content == null || content.isBlank()) {
+                return ApiResponse.error(400, "PDF 文本层提取为空，无法切片");
+            }
+        } else {
+            content = new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+
         List<com.tradeagent.modules.ai.rag.DocumentChunk> chunks = astMarkdownChunker.split(System.currentTimeMillis(), content);
 
         if (chunks.isEmpty()) {
-            return ApiResponse.error(400, "文档未能解析出有效切片，请确认文件格式");
+            return ApiResponse.error(400, "文档未能解析出有效切片，请确认文件包含有效文本");
         }
 
         com.tradeagent.modules.ai.rag.benchmark.RagBenchmarkReport report =

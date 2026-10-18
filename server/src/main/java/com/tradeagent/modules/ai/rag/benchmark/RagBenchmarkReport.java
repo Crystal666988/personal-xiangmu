@@ -18,6 +18,10 @@ import java.util.Map;
 public class RagBenchmarkReport {
     /** 评测任务 ID */
     private String benchmarkId;
+    /** 真实切片索引数量 */
+    private int totalChunksIndexed;
+    /** 切片预览列表 */
+    private List<ChunkPreview> chunkPreviews;
     /** 总测试用例数 (200) */
     private int totalQuestions;
     /** 成功命中召回用例数 (如 178) */
@@ -36,6 +40,18 @@ public class RagBenchmarkReport {
     private Map<String, CategoryMetric> categoryMetrics;
     /** 典型 Bad-Case 抽样分析 */
     private List<BadCaseDetail> sampleBadCases;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ChunkPreview {
+        private String chunkId;
+        private String breadcrumb;
+        private String chunkType;
+        private int charLength;
+        private String snippet;
+    }
 
     @Data
     @Builder
