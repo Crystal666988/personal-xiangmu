@@ -82,6 +82,9 @@ public class KnowledgeBaseService {
     private volatile InMemoryChunkRetriever globalRetriever;
     private final Map<String, InMemoryChunkRetriever> docRetrieverMap = new ConcurrentHashMap<>();
 
+    /** 最近一次评测生成的完整报告 (内存持久化保存，避免刷新或切页面丢失) */
+    private volatile RagBenchmarkReport latestBenchmarkReport;
+
     @Data
     @Builder
     @NoArgsConstructor
@@ -343,9 +346,10 @@ public class KnowledgeBaseService {
                 contextBuilder, question);
 
         // 3. 调用真实大模型生成回答
-        String effectiveApiKey = (apiKey != null && !apiKey.isBlank()) ? apiKey.trim() : DEFAULT_DASHSCOPE_KEY;
-        String effectiveBaseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : DEFAULT_DASHSCOPE_BASE_URL;
-        String effectiveModel = (modelName != null && !modelName.isBlank()) ? modelName.trim() : DEFAULT_MODEL;
+        String[] resolved = resolveLlmConfig(apiKey, baseUrl, modelName);
+        String effectiveApiKey = resolved[0];
+        String effectiveBaseUrl = resolved[1];
+        String effectiveModel = resolved[2];
 
         String answer = callLlmChat(effectiveBaseUrl, effectiveApiKey, effectiveModel, systemPrompt, userPrompt);
         long latency = System.currentTimeMillis() - start;
@@ -382,11 +386,10 @@ public class KnowledgeBaseService {
         int count = targetCount > 0 ? targetCount : 10;
         log.info("【真实 AI 出题评测】开始调用大模型阅读切片并生成 {} 道真题...", count);
 
-        // 1. 准备切片样本喂给大模型
+        // 1. 准备切片样本喂给大模型 (工业级分层抽样：当切片过多时，兼顾表格、各章节首尾，保证全局覆盖)
+        List<DocumentChunk> sampledChunks = sampleRepresentativeChunks(chunks, 16);
         StringBuilder chunkContext = new StringBuilder();
-        int maxChunksToFeed = Math.min(chunks.size(), 16); // 喂入最具代表性的切片样本
-        for (int i = 0; i < maxChunksToFeed; i++) {
-            DocumentChunk c = chunks.get(i);
+        for (DocumentChunk c : sampledChunks) {
             String snippet = c.getContent();
             if (snippet.length() > 350) snippet = snippet.substring(0, 350) + "...";
             chunkContext.append(String.format("### 切片ID: %s\n- 章节路径: %s\n- 类型: %s\n- 内容:\n%s\n\n",
@@ -418,9 +421,10 @@ public class KnowledgeBaseService {
 
         String userPrompt = String.format("请仔细阅读以下真实切片，生成 %d 道 RAG 评测考题：\n\n%s", count, chunkContext);
 
-        String effectiveApiKey = (apiKey != null && !apiKey.isBlank()) ? apiKey.trim() : DEFAULT_DASHSCOPE_KEY;
-        String effectiveBaseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : DEFAULT_DASHSCOPE_BASE_URL;
-        String effectiveModel = (modelName != null && !modelName.isBlank()) ? modelName.trim() : DEFAULT_MODEL;
+        String[] resolved = resolveLlmConfig(apiKey, baseUrl, modelName);
+        String effectiveApiKey = resolved[0];
+        String effectiveBaseUrl = resolved[1];
+        String effectiveModel = resolved[2];
 
         String llmRawOutput = callLlmChat(effectiveBaseUrl, effectiveApiKey, effectiveModel, systemPrompt, userPrompt);
         log.info("【真实 AI 出题】大模型返回考题响应字符数: {}", llmRawOutput.length());
@@ -466,14 +470,32 @@ public class KnowledgeBaseService {
                 List<String> recalledIds = topResults.stream().map(sc -> sc.getChunk().getChunkId()).collect(Collectors.toList());
                 q.setRetrievedChunkIds(recalledIds);
 
-                boolean matchedChunk = q.getExpectedChunkId() != null && recalledIds.contains(q.getExpectedChunkId());
-                boolean matchedKeyword = false;
-                if (!matchedChunk && q.getExpectedKeyword() != null && !q.getExpectedKeyword().isBlank()) {
-                    for (InMemoryChunkRetriever.ScoredChunk sc : topResults) {
-                        if (sc.getChunk().getContent() != null && sc.getChunk().getContent().contains(q.getExpectedKeyword())) {
-                            matchedKeyword = true;
+                boolean matchedChunk = false;
+                if (q.getExpectedChunkId() != null && !q.getExpectedChunkId().isBlank()) {
+                    String[] expectedArr = q.getExpectedChunkId().split("[,，\\s]+");
+                    for (String exp : expectedArr) {
+                        String cleanExp = exp.trim();
+                        if (!cleanExp.isBlank() && recalledIds.contains(cleanExp)) {
+                            matchedChunk = true;
                             break;
                         }
+                    }
+                }
+
+                boolean matchedKeyword = false;
+                if (!matchedChunk && q.getExpectedKeyword() != null && !q.getExpectedKeyword().isBlank()) {
+                    String[] kwArr = q.getExpectedKeyword().split("[|｜,，]+");
+                    for (String kw : kwArr) {
+                        String cleanKw = kw.trim();
+                        if (cleanKw.length() >= 2) {
+                            for (InMemoryChunkRetriever.ScoredChunk sc : topResults) {
+                                if (sc.getChunk().getContent() != null && sc.getChunk().getContent().contains(cleanKw)) {
+                                    matchedKeyword = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (matchedKeyword) break;
                     }
                 }
 
@@ -545,7 +567,7 @@ public class KnowledgeBaseService {
                     .build();
         }).collect(Collectors.toList());
 
-        return RagBenchmarkReport.builder()
+        RagBenchmarkReport report = RagBenchmarkReport.builder()
                 .benchmarkId("AI_BENCHMARK_" + System.currentTimeMillis())
                 .totalChunksIndexed(chunks.size())
                 .chunkPreviews(chunkPreviews)
@@ -560,25 +582,45 @@ public class KnowledgeBaseService {
                 .sampleBadCases(sampleBadCases)
                 .questionResults(questionResults)
                 .build();
+
+        this.latestBenchmarkReport = report;
+        return report;
     }
 
     /**
-     * 解析大模型生成的考题 JSON
+     * 获取最新生成的评测报告 (如已生成)
+     */
+    public RagBenchmarkReport getLatestBenchmarkReport() {
+        return this.latestBenchmarkReport;
+    }
+
+    /**
+     * 解析大模型生成的考题 JSON (增强容错：支持去除寒暄前缀、尾注、Markdown代码块、多ID数组)
      */
     private List<RagBenchmarkReport.QuestionEvaluationResult> parseAiGeneratedQuestions(String rawOutput) {
         List<RagBenchmarkReport.QuestionEvaluationResult> list = new ArrayList<>();
+        if (rawOutput == null || rawOutput.isBlank()) return list;
+
         try {
             String json = rawOutput.trim();
-            // 剥离 Markdown 代码块 ```json ... ```
-            if (json.startsWith("```")) {
-                int firstNewline = json.indexOf('\n');
-                if (firstNewline != -1) {
-                    json = json.substring(firstNewline + 1);
+
+            // 1. 如果大模型输出了 ```json ... ```，先定位代码块
+            int codeBlockStart = json.indexOf("```");
+            if (codeBlockStart != -1) {
+                int contentStart = json.indexOf('\n', codeBlockStart);
+                if (contentStart != -1) {
+                    int codeBlockEnd = json.lastIndexOf("```");
+                    if (codeBlockEnd > contentStart) {
+                        json = json.substring(contentStart + 1, codeBlockEnd).trim();
+                    }
                 }
-                if (json.endsWith("```")) {
-                    json = json.substring(0, json.length() - 3);
-                }
-                json = json.trim();
+            }
+
+            // 2. 无论是否有寒暄客套话，智能截取最外层的 JSON 数组 [ ... ]
+            int firstBracket = json.indexOf('[');
+            int lastBracket = json.lastIndexOf(']');
+            if (firstBracket != -1 && lastBracket != -1 && lastBracket > firstBracket) {
+                json = json.substring(firstBracket, lastBracket + 1).trim();
             }
 
             JsonNode root = objectMapper.readTree(json);
@@ -595,13 +637,26 @@ public class KnowledgeBaseService {
 
                     boolean isAdv = item.path("isAdversarial").asBoolean(false) || "ADVERSARIAL".equalsIgnoreCase(cat);
 
+                    // 兼容 expectedChunkId 为单一字符串或数组 (如 ["chunk_12", "chunk_14"])
+                    String expectedChunkId = "NONE";
+                    JsonNode chunkNode = item.path("expectedChunkId");
+                    if (chunkNode.isArray()) {
+                        List<String> ids = new ArrayList<>();
+                        for (JsonNode idNode : chunkNode) {
+                            if (!idNode.asText().isBlank()) ids.add(idNode.asText());
+                        }
+                        expectedChunkId = String.join(", ", ids);
+                    } else if (!chunkNode.isMissingNode() && !chunkNode.asText().isBlank()) {
+                        expectedChunkId = chunkNode.asText();
+                    }
+
                     list.add(RagBenchmarkReport.QuestionEvaluationResult.builder()
                             .id("AI_Q_" + index++)
                             .question(item.path("question").asText())
                             .category(cat)
                             .categoryName(catName)
                             .groundTruthAnswer(item.path("groundTruthAnswer").asText("待比对切片"))
-                            .expectedChunkId(item.path("expectedChunkId").asText("NONE"))
+                            .expectedChunkId(expectedChunkId)
                             .expectedKeyword(item.path("expectedKeyword").asText(""))
                             .isAdversarial(isAdv)
                             .retrievedChunkIds(new ArrayList<>())
@@ -655,5 +710,72 @@ public class KnowledgeBaseService {
             throw new RuntimeException("大模型返回内容为空");
         }
         return contentNode.asText();
+    }
+
+    /**
+     * 智能解析并归一化模型参数，避免厂商模型与 BaseUrl 不匹配 (例如 DeepSeek 调 Qwen 报 404)
+     */
+    private String[] resolveLlmConfig(String apiKey, String baseUrl, String modelName) {
+        String key = (apiKey != null && !apiKey.isBlank() && !apiKey.contains("placeholder")) ? apiKey.trim() : null;
+        String url = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl.trim() : null;
+        String model = (modelName != null && !modelName.isBlank()) ? modelName.trim() : null;
+
+        if (key == null) {
+            // 用户没有输入有效密钥，统一使用系统内置的 DashScope 通义千问通道
+            return new String[]{DEFAULT_DASHSCOPE_KEY, DEFAULT_DASHSCOPE_BASE_URL, DEFAULT_MODEL};
+        }
+
+        // 自动适配厂商与模型名
+        if (url != null && url.contains("deepseek")) {
+            if (model == null || model.toLowerCase().contains("qwen")) {
+                model = "deepseek-chat";
+            }
+        } else if (url != null && (url.contains("dashscope") || url.contains("aliyuncs"))) {
+            if (model == null || model.toLowerCase().contains("deepseek")) {
+                model = "qwen-plus";
+            }
+        }
+        if (url == null) url = DEFAULT_DASHSCOPE_BASE_URL;
+        if (model == null) model = DEFAULT_MODEL;
+
+        return new String[]{key, url, model};
+    }
+
+    /**
+     * 工业级分层均匀抽样：当切片数量很多（成百上千）时，如何兼顾 Token 上限与出题覆盖率？
+     * 1. 优先保留所有表格类型切片（TABLE），因为表格切片信息密度极高，非常适合出数值型考题；
+     * 2. 剩余配额采用等步长跨章节抽样（Step Sampling），均匀覆盖文档的前、中、后各个章节。
+     */
+    private List<DocumentChunk> sampleRepresentativeChunks(List<DocumentChunk> chunks, int maxCount) {
+        if (chunks == null || chunks.size() <= maxCount) {
+            return chunks != null ? chunks : Collections.emptyList();
+        }
+
+        List<DocumentChunk> selected = new ArrayList<>();
+        // 1. 优先提取表格切片 (最多占 4 个名额)
+        List<DocumentChunk> tableChunks = chunks.stream()
+                .filter(c -> "TABLE".equalsIgnoreCase(c.getChunkType()))
+                .limit(Math.min(4, maxCount / 2))
+                .toList();
+        selected.addAll(tableChunks);
+
+        // 2. 剩余切片按跨度步长均匀采样，覆盖整个文档树
+        int remainingSlots = maxCount - selected.size();
+        List<DocumentChunk> nonTableChunks = chunks.stream()
+                .filter(c -> !"TABLE".equalsIgnoreCase(c.getChunkType()))
+                .toList();
+
+        if (nonTableChunks.size() <= remainingSlots) {
+            selected.addAll(nonTableChunks);
+        } else {
+            double step = (double) nonTableChunks.size() / remainingSlots;
+            for (int i = 0; i < remainingSlots; i++) {
+                int index = (int) Math.round(i * step);
+                if (index < nonTableChunks.size()) {
+                    selected.add(nonTableChunks.get(index));
+                }
+            }
+        }
+        return selected;
     }
 }

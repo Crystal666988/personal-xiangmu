@@ -165,4 +165,14 @@ public class KnowledgeBaseController {
             return ApiResponse.error(500, "AI 出题评测失败: " + e.getMessage());
         }
     }
+
+    /**
+     * 8. 获取最新一次 AI 评测的持久化报告
+     */
+    @GetMapping("/benchmark/latest")
+    @Operation(summary = "获取最新生成的评测报告")
+    public ApiResponse<RagBenchmarkReport> getLatestBenchmark() {
+        RagBenchmarkReport report = knowledgeBaseService.getLatestBenchmarkReport();
+        return ApiResponse.success(report);
+    }
 }

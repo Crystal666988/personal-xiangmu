@@ -279,6 +279,23 @@
               <span>💡 <strong>真实 AI 出题机制</strong>：系统将已入库切片发送给配置的大模型，由大模型深度理解切片语义，逆向生成单跳事实、跨段推理、表格提取与对抗诱导四大象限考题及标准黄金答案；随后通过真实 BM25 倒排索引逐题检验 Top-4 召回率与 Bad-Case，<strong>彻底拒绝纯正则匹配与 Mock 假数据</strong>。</span>
             </div>
 
+            <!-- 正在运行 AI 评测的动态状态卡片 -->
+            <div v-if="isRunningAiBenchmark" class="benchmark-running-card">
+              <div class="running-header">
+                <el-icon class="is-loading" :size="22" color="#409eff"><Loading /></el-icon>
+                <span><strong>AI 大模型正在阅读切片并生成高质量考题中...</strong></span>
+              </div>
+              <p class="running-desc">大模型正在对切片进行深度语义理解，逆向生成 4 种维度的考题与黄金标准答案。出题完成后，系统将自动发起全量切片 BM25 检索，检验 Top-4 召回率与 Bad-Case，请稍候约 10~25 秒...</p>
+              <el-progress :percentage="80" :indeterminate="true" :duration="2" status="success" />
+            </div>
+
+            <!-- 空状态引导提示 -->
+            <div v-else-if="!benchmarkReport" class="benchmark-empty-card">
+              <el-icon :size="48" color="#c0c4cc"><DataAnalysis /></el-icon>
+              <div class="empty-title">暂无评测报告</div>
+              <div class="empty-desc">请选择切片来源（推荐选择全部知识库或指定文档），点击上方绿色按钮即可让 AI 深度阅读切片出题，全自动检验并生成召回看板！</div>
+            </div>
+
             <!-- 评测结果报告 -->
             <div v-if="benchmarkReport" class="benchmark-report-section">
               <el-divider content-position="left">
@@ -468,7 +485,8 @@ import {
   CircleCheckFilled,
   Refresh,
   View,
-  Delete
+  Delete,
+  Loading
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -478,7 +496,8 @@ import {
   getDocumentChunksApi,
   deleteKnowledgeDocumentApi,
   onlineKnowledgeAskApi,
-  runAiSyntheticBenchmarkApi
+  runAiSyntheticBenchmarkApi,
+  getLatestBenchmarkReportApi
 } from '@/api/agent'
 
 const router = useRouter()
@@ -737,8 +756,14 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadDocuments()
+  try {
+    const res = await getLatestBenchmarkReportApi()
+    if (res && res.data) {
+      benchmarkReport.value = res.data
+    }
+  } catch (_) {}
 })
 </script>
 
@@ -1240,5 +1265,57 @@ onMounted(() => {
 
 .font-mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.benchmark-running-card {
+  background: #f0f9eb;
+  border: 1px solid #c2e7b0;
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin-top: 14px;
+}
+
+.running-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  color: #303133;
+  margin-bottom: 8px;
+}
+
+.running-desc {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+  margin: 0 0 14px 0;
+}
+
+.benchmark-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  background: #ffffff;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+  margin-top: 14px;
+  text-align: center;
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #606266;
+  margin-top: 12px;
+  margin-bottom: 6px;
+}
+
+.empty-desc {
+  font-size: 13px;
+  color: #909399;
+  max-width: 500px;
+  line-height: 1.5;
 }
 </style>

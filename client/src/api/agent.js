@@ -258,4 +258,14 @@ export function runAiSyntheticBenchmarkApi(data) {
   })
 }
 
+/**
+ * 8. 获取最新一次 AI 评测的持久化报告
+ */
+export function getLatestBenchmarkReportApi() {
+  return request({
+    url: '/kb/benchmark/latest',
+    method: 'get'
+  })
+}
+
 
