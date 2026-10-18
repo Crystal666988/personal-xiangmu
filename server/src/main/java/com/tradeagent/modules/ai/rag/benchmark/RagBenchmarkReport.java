@@ -1,0 +1,63 @@
+package com.tradeagent.modules.ai.rag.benchmark;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * RAG 200 题黄金评测基准输出报告
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class RagBenchmarkReport {
+    /** 评测任务 ID */
+    private String benchmarkId;
+    /** 总测试用例数 (200) */
+    private int totalQuestions;
+    /** 成功命中召回用例数 (如 178) */
+    private int hitCount;
+    /** 上下文召回率 Hit@4 (如 89.0%) */
+    private double recallRate;
+    /** 缺陷样本数 (如 5) */
+    private int badCaseCount;
+    /** 缺陷率 Bad-Case Rate (如 2.5%) */
+    private double badCaseRate;
+    /** 对抗与拒答测试通过率 (如 98.0%) */
+    private double adversarialRejectionRate;
+    /** 平均检索耗时 (ms) */
+    private double avgRetrievalLatencyMs;
+    /** 各象限分类指标详情 */
+    private Map<String, CategoryMetric> categoryMetrics;
+    /** 典型 Bad-Case 抽样分析 */
+    private List<BadCaseDetail> sampleBadCases;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CategoryMetric {
+        private String categoryName;
+        private int total;
+        private int hits;
+        private double hitRate;
+        private int badCases;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BadCaseDetail {
+        private String questionId;
+        private String question;
+        private String category;
+        private String reason;
+        private String optimizationAction;
+    }
+}

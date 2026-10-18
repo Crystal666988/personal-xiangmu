@@ -19,7 +19,7 @@ import java.util.*;
 public class AstMarkdownChunker {
 
     @Resource
-    private MarkdownTableProcessor tableProcessor;
+    private MarkdownTableProcessor tableProcessor = new MarkdownTableProcessor();
 
     /**
      * 对 Markdown 文本进行 AST 语义分块

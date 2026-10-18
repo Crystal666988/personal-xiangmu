@@ -53,9 +53,24 @@ mybatis-plus:
       logic-not-delete-value: 0
 
 # Knife4j 接口文档
+agent:
+  memory:
+    summary:
+      # 通过启动进程的环境变量配置，缺少密钥时只使用最近20条历史并提示。
+      api-key: ${SUMMARY_API_KEY:}
+      base-url: ${SUMMARY_BASE_URL:https://api.deepseek.com/v1}
+      model: ${SUMMARY_MODEL:deepseek-chat}
+
 knife4j:
   enable: true
   openapi:
     title: TradeAgent AI 智能体平台接口文档
     description: 工业级外贸全链路 AI 获客与多 Agent 协同系统
     version: 1.0.0
+
+aliyun:
+  oss:
+    access-key-id: ${ALIYUN_OSS_ACCESS_KEY_ID:}
+    access-key-secret: ${ALIYUN_OSS_ACCESS_KEY_SECRET:}
+    bucket-name: ${ALIYUN_OSS_BUCKET_NAME:life-agent-imgsearch}
+    endpoint: ${ALIYUN_OSS_ENDPOINT:oss-cn-guangzhou.aliyuncs.com}

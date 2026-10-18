@@ -8,6 +8,9 @@ import lombok.Getter;
 @Getter
 public enum ToolDomain {
 
+    VISION("vision", "多模态视觉与单据识别"),
+    COMPOSITE("composite", "复合意图协同"),
+
     /**
      * 1. 知识与资料域：查产品库、规格书、外贸常见问题、CE/UL/TUV 认证文档
      */

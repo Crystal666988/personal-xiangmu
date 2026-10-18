@@ -1,80 +1,63 @@
 package com.tradeagent.core.dag;
 
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-
+import java.util.*;
 import java.util.regex.Pattern;
 
-/**
- * 意图路由器 (Intent Router & Tool Pruning)
- * 
- * 核心技术机制：
- * 1. 【极速轻量路由】：在调主模型前，以 1ms 级别的规则+模式匹配命中核心意图；
- * 2. 【工具动态裁剪 (Tool Pruning)】：将全量 30+ 工具动态收敛为该领域所属的 2~3 个专属工具；
- * 3. 【防幻觉防超限】：彻底避免将全部工具 Schema 灌入 Prompt 引发的 Token 浪费与注意力稀释。
- */
-@Slf4j
+/** 后端统一意图路由：多领域取并集，工具按 ID 排序。 */
 @Component
 public class IntentRouter {
+    private static final Map<ToolDomain, Pattern> RULES = Map.of(
+            ToolDomain.COMMERCE, Pattern.compile("(?i)(\\b(price|quotation|quote|cif|fob|pi|freight|cost)\\b|报价|价格|运费|单价|货柜|账期|多少钱|美元)"),
+            ToolDomain.KNOWLEDGE, Pattern.compile("(?i)(\\b(specification|datasheet|cert|ce|ul|tuv|rohs|warranty|catalog)\\b|参数|规格|认证|证书|质保|手册|说明书|文档|简历|技术栈|项目|架构|并发|方案|建议|怎么办|如何|分析|优化|\\.(pdf|txt|md|docx?|csv|json)$)"),
+            ToolDomain.PROSPECT, Pattern.compile("(?i)(\\b(company|website|address|customs|background|maps)\\b|官网|背景|海关|税号|背调|地址|提单)"),
+            ToolDomain.CRM, Pattern.compile("(?i)(\\b(profile|follow up|schedule|stage|crm)\\b|档案|跟进|意向|预约|联系人|建档|客户)"),
+            ToolDomain.VISION, Pattern.compile("(?i)(图片|截图|拍照|单据|识别|看图|ocr|图纸|扫描件|讲了啥|讲了什么|\\.(png|jpe?g|webp)$)"));
 
-    // 价格、报价、运费、CIF、FOB、PI 单据等商贸关键词
-    private static final Pattern COMMERCE_PATTERN = Pattern.compile(
-            "(?i)(price|quotation|quote|cif|fob|pi|freight|cost|shipping fee|报价|价格|运费|单价|货柜|账期|多少钱)"
-    );
+    public record Tool(String id, String name, String domain, String desc) {}
+    public record Routing(String domain, String domainName, String icon, String color,
+                          String reason, List<Tool> activeTools, int prunedToolsCount) {}
 
-    // 认证、规格、参数、CE、TUV、UL、光伏组件、手册等知识关键词
-    private static final Pattern KNOWLEDGE_PATTERN = Pattern.compile(
-            "(?i)(specification|datasheet|cert|ce|ul|tuv|rohs|warranty|catalog|参数|规格|认证|证书|质保|手册|说明书)"
-    );
+    // 仅登记元数据；接入真实执行器后才可下发 function schema。
+    private static final List<Tool> TOOLS = List.of(
+            new Tool("calculate_tier_price", "阶梯价格计算器", "COMMERCE", "根据采购数量计算阶梯折扣与单价"),
+            new Tool("estimate_freight_cif", "CIF/FOB 海运费核算", "COMMERCE", "按港口与柜型核算运费与保险"),
+            new Tool("generate_proforma_invoice", "PI 单据生成", "COMMERCE", "根据订单要素生成预结单据"),
+            new Tool("currency_exchange_rate", "外汇牌价查询", "COMMERCE", "查询即期汇率"),
+            new Tool("vision_multimodal_ocr", "视觉 OCR 抽取", "VISION", "提取图像和单据中的文字"),
+            new Tool("visual_key_verifier", "凭证格式核查", "VISION", "核查凭证编号与印章格式"),
+            new Tool("ast_spec_lookup", "图纸表格要素提取", "VISION", "提取图纸参数与表格信息"),
+            new Tool("rag_vector_search", "知识库检索", "KNOWLEDGE", "检索产品手册、规格与认证资料"),
+            new Tool("cert_compliance_check", "认证匹配", "KNOWLEDGE", "核查目标国准入认证"),
+            new Tool("google_maps_radar", "企业地图查询", "PROSPECT", "查询企业位置"),
+            new Tool("customs_data_lookup", "海关提单检索", "PROSPECT", "查询历史进出口提单"),
+            new Tool("website_deep_scanner", "企业官网检索", "PROSPECT", "查询官网介绍与联系方式"),
+            new Tool("update_customer_profile", "客户画像更新", "CRM", "更新已确认的客户业务事实"),
+            new Tool("schedule_follow_up", "跟进日程", "CRM", "创建跟进任务"),
+            new Tool("opportunity_stage_shift", "商机阶段更新", "CRM", "更新商机阶段"));
 
-    // 背调、地图、海关、公司、官网等背调拓客关键词
-    private static final Pattern PROSPECT_PATTERN = Pattern.compile(
-            "(?i)(company|website|address|customs|background|maps|官网|背景|海关|税号|背调|地址|查一下公司)"
-    );
+    public ToolDomain routeDomain(String input) {
+        return ToolDomain.valueOf(route(input, null).domain());
+    }
 
-    // 客户档案、跟进、预约、阶段等 CRM 关键词
-    private static final Pattern CRM_PATTERN = Pattern.compile(
-            "(?i)(profile|follow up|schedule|stage|crm|档案|跟进|意向|预约|联系人|建档)"
-    );
+    public Routing route(String input, String attachmentName) {
+        String text = Objects.toString(input, "") + " " + Objects.toString(attachmentName, "");
+        EnumSet<ToolDomain> domains = EnumSet.noneOf(ToolDomain.class);
+        RULES.forEach((domain, pattern) -> { if (pattern.matcher(text.trim()).find()) domains.add(domain); });
+        ToolDomain primary = domains.isEmpty() ? ToolDomain.GENERAL
+                : domains.size() > 1 ? ToolDomain.COMPOSITE : domains.iterator().next();
+        List<Tool> selected = TOOLS.stream()
+                .filter(t -> domains.contains(ToolDomain.valueOf(t.domain())))
+                .sorted(Comparator.comparing(Tool::id)).toList();
+        return new Routing(primary.name(), primary.getDescription(), "Connection", "#409eff",
+                domains.isEmpty() ? "通用对话，无需挂载业务工具" : "命中领域：" + domains,
+                selected, TOOLS.size() - selected.size());
+    }
 
-    /**
-     * 根据用户输入快速路由到对应的工具领域
-     *
-     * @param userMessage 用户的即时输入
-     * @return 命中的工具领域
-     */
-    public ToolDomain routeDomain(String userMessage) {
-        if (userMessage == null || userMessage.isBlank()) {
-            return ToolDomain.GENERAL;
-        }
-
-        String trimmed = userMessage.trim();
-
-        // 1. 优先检测高频商贸与报价意图 (外贸业务核心)
-        if (COMMERCE_PATTERN.matcher(trimmed).find()) {
-            log.info("【意图路由器】命中商贸与报价域 (COMMERCE) -> 动态挂载: 阶梯报价工具 / 海运费核算工具");
-            return ToolDomain.COMMERCE;
-        }
-
-        // 2. 检测产品规格与清关资质知识意图
-        if (KNOWLEDGE_PATTERN.matcher(trimmed).find()) {
-            log.info("【意图路由器】命中知识与资料域 (KNOWLEDGE) -> 动态挂载: RAG知识库检索 / 证书文件提取工具");
-            return ToolDomain.KNOWLEDGE;
-        }
-
-        // 3. 检测海外企业背调与数据挖掘意图
-        if (PROSPECT_PATTERN.matcher(trimmed).find()) {
-            log.info("【意图路由器】命中拓客与背调域 (PROSPECT) -> 动态挂载: GoogleMaps探查 / 官网深扫工具");
-            return ToolDomain.PROSPECT;
-        }
-
-        // 4. 检测 CRM 客户跟进意图
-        if (CRM_PATTERN.matcher(trimmed).find()) {
-            log.info("【意图路由器】命中CRM管理域 (CRM) -> 动态挂载: 客户档案回写 / 跟进日志工具");
-            return ToolDomain.CRM;
-        }
-
-        log.info("【意图路由器】命中通用商贸咨询 (GENERAL) -> 采用标准对话策略");
-        return ToolDomain.GENERAL;
+    public String describeTools(Routing routing) {
+        if (routing.activeTools().isEmpty()) return null;
+        return "以下仅为本轮匹配的工具目录，尚未接入自动执行，不能声称已调用：\n"
+                + String.join("\n", routing.activeTools().stream()
+                .map(t -> t.id() + " | " + t.name() + " | " + t.desc()).toList());
     }
 }

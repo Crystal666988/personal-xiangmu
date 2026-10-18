@@ -21,6 +21,10 @@ public class ApiResponse<T> implements Serializable {
     private T data;
     private long timestamp;
 
+    public static <T> ApiResponse<T> ok() {
+        return success(null);
+    }
+
     public static <T> ApiResponse<T> success(T data) {
         return ApiResponse.<T>builder()
                 .code(200)
