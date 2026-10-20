@@ -10,6 +10,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -48,7 +49,9 @@ public class DocumentVisionRagController {
     private com.tradeagent.core.oss.AliyunOssService aliyunOssService;
 
     private static final String DASHSCOPE_OCR_ENDPOINT = "https://ws-cn8hz18dyinru4mu.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions";
-    private static final String DASHSCOPE_API_KEY = "REDACTED";
+
+    @Value("${dashscope.api-key:}")
+    private String dashscopeApiKey;
 
     /**
      * 上传文档或图片，执行阿里云 OSS 云端归档、三级多模态降级解析与 OCR 抽取
@@ -140,6 +143,11 @@ public class DocumentVisionRagController {
      * 真实调用阿里云 DashScope qwen-vl-ocr 执行高精度 OCR 文字提取
      */
     private String callQwenVlOcr(byte[] imageBytes, String lowerName) {
+        String apiKey = dashscopeApiKey != null ? dashscopeApiKey.trim() : "";
+        if (apiKey.isBlank()) {
+            log.warn("【qwen-vl-ocr】未配置 DASHSCOPE_API_KEY，跳过视觉 OCR");
+            return "";
+        }
         try {
             String format = "png";
             if (lowerName.endsWith(".jpg") || lowerName.endsWith(".jpeg")) format = "jpeg";
@@ -158,7 +166,7 @@ public class DocumentVisionRagController {
             java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(java.net.URI.create(DASHSCOPE_OCR_ENDPOINT))
                     .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + DASHSCOPE_API_KEY)
+                    .header("Authorization", "Bearer " + apiKey)
                     .POST(java.net.http.HttpRequest.BodyPublishers.ofString(jsonPayload))
                     .timeout(java.time.Duration.ofSeconds(25))
                     .build();
