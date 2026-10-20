@@ -18,21 +18,31 @@ import java.util.Map;
 public class RagBenchmarkReport {
     /** 评测任务 ID */
     private String benchmarkId;
+    /** 评测使用的大模型 */
+    private String modelUsed;
     /** 真实切片索引数量 */
     private int totalChunksIndexed;
     /** 切片预览列表 */
     private List<ChunkPreview> chunkPreviews;
-    /** 总测试用例数 (200) */
+    /** 总测试用例数 (如 3 或 200) */
     private int totalQuestions;
-    /** 成功命中召回用例数 (如 178) */
+    /** 正向检索测试题数 (排除对抗题) */
+    private int positiveQuestions;
+    /** 成功命中召回用例数 (如 2 或 178) */
     private int hitCount;
-    /** 上下文召回率 Hit@4 (如 89.0%) */
+    /** 全局综合准确率 (命中数+对抗防御通过数 / 总题数) % */
+    private double overallAccuracy;
+    /** 上下文召回率 Hit@4 (如 100.0% 或 89.0%) */
     private double recallRate;
-    /** 缺陷样本数 (如 5) */
+    /** 缺陷样本数 (如 0 或 5) */
     private int badCaseCount;
-    /** 缺陷率 Bad-Case Rate (如 2.5%) */
+    /** 缺陷率 Bad-Case Rate (如 0.0% 或 2.5%) */
     private double badCaseRate;
-    /** 对抗与拒答测试通过率 (如 98.0%) */
+    /** 对抗诱导题总数 */
+    private int adversarialQuestions;
+    /** 对抗防御成功数 */
+    private int adversarialPassed;
+    /** 对抗与拒答测试通过率 (如 100.0% 或 98.0%) */
     private double adversarialRejectionRate;
     /** 平均检索耗时 (ms) */
     private double avgRetrievalLatencyMs;
@@ -92,8 +102,33 @@ public class RagBenchmarkReport {
         private String expectedChunkId;
         private String expectedKeyword;
         private List<String> retrievedChunkIds;
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isHit")
         private boolean isHit;
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isAdversarial")
         private boolean isAdversarial;
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isHit")
+        public boolean isHit() {
+            return isHit;
+        }
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isHit")
+        public void setHit(boolean hit) {
+            this.isHit = hit;
+        }
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isAdversarial")
+        public boolean isAdversarial() {
+            return isAdversarial;
+        }
+
+        @com.fasterxml.jackson.annotation.JsonProperty("isAdversarial")
+        public void setAdversarial(boolean adversarial) {
+            this.isAdversarial = adversarial;
+        }
+
         private String retrievedSnippet;
         private String badCaseReason;
     }

@@ -35,8 +35,19 @@ class AgentContextServiceTest {
             return "已确认事实与待办";
         }
     });
+    private final IntentRouter router = new IntentRouter();
+    private final com.tradeagent.modules.ai.tools.ToolRegistry toolRegistry =
+            new com.tradeagent.modules.ai.tools.ToolRegistry(List.of(
+                    new com.tradeagent.modules.ai.tools.TierPriceCalculatorTool(),
+                    new com.tradeagent.modules.ai.tools.FreightCifEstimatorTool(),
+                    new com.tradeagent.modules.ai.tools.CurrencyExchangeRateTool()
+            ));
+    private final com.tradeagent.modules.ai.tools.ToolDispatchService dispatchService =
+            new com.tradeagent.modules.ai.tools.ToolDispatchService(toolRegistry, router);
+    private final com.tradeagent.core.dag.ReActExecutor reactExecutor =
+            new com.tradeagent.core.dag.ReActExecutor(toolRegistry, router);
     private final AgentContextService service = new AgentContextService(sessions, history,
-            new ConversationContextManager(), new IntentRouter(), new ObjectMapper(), summaries);
+            new ConversationContextManager(), router, new ObjectMapper(), summaries, dispatchService, reactExecutor);
 
     private void session() {
         storedSession = AgentSession.builder().id("s1").tenantId("t1").build();

@@ -174,10 +174,16 @@
                 />
                 <div class="qa-submit-bar">
                   <span class="submit-tip">按 Ctrl + Enter 快速提问</span>
-                  <el-button type="primary" size="large" :loading="isAskingQa" @click="handleSendQa">
-                    <el-icon v-if="!isAskingQa"><ChatDotRound /></el-icon>
-                    <span>检索并由 AI 回答</span>
-                  </el-button>
+                  <div class="qa-btn-group">
+                    <el-button type="info" plain size="large" @click="openQaHistoryDrawer">
+                      <el-icon><List /></el-icon>
+                      <span>问答历史与审计 ({{ qaHistoryTotal }})</span>
+                    </el-button>
+                    <el-button type="primary" size="large" :loading="isAskingQa" @click="handleSendQa">
+                      <el-icon v-if="!isAskingQa"><ChatDotRound /></el-icon>
+                      <span>检索并由 AI 回答</span>
+                    </el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -189,7 +195,31 @@
               </el-divider>
 
               <div class="qa-answer-card">
-                <div class="answer-text">{{ qaResponse.answer }}</div>
+                <div class="answer-text markdown-body" v-html="renderMarkdown(qaResponse.answer)"></div>
+
+                <!-- 准确率人工审计打分栏 -->
+                <div class="qa-rating-bar">
+                  <span class="rating-tip">🎯 问答准确率审计：</span>
+                  <el-button
+                    size="small"
+                    :type="currentQaRating === 'ACCURATE' ? 'success' : 'default'"
+                    :plain="currentQaRating !== 'ACCURATE'"
+                    @click="handleRateQa(qaResponse.id, 'ACCURATE')"
+                  >
+                    👍 准确规范
+                  </el-button>
+                  <el-button
+                    size="small"
+                    :type="currentQaRating === 'INACCURATE' ? 'danger' : 'default'"
+                    :plain="currentQaRating !== 'INACCURATE'"
+                    @click="handleRateQa(qaResponse.id, 'INACCURATE')"
+                  >
+                    👎 存在偏差/幻觉
+                  </el-button>
+                  <span v-if="currentQaRating" class="rating-feedback-status">
+                    已打标: {{ currentQaRating === 'ACCURATE' ? '✅ 准确规范' : '⚠️ 存在偏差' }}
+                  </span>
+                </div>
               </div>
 
               <!-- 真实溯源引用切片 -->
@@ -207,14 +237,22 @@
                   >
                     <div class="cite-top">
                       <el-tag size="small" type="primary">切片 {{ idx + 1 }}</el-tag>
-                      <el-tag size="small" type="success">相关度: {{ cite.score }}</el-tag>
+                      <el-tag size="small" type="success" title="70% 稠密向量余弦相似度 + 30% BM25 综合归一化融合得分">
+                        🎯 融合得分: {{ cite.score }}
+                      </el-tag>
+                      <el-tag v-if="cite.vectorSimilarity != null" size="small" type="warning" title="阿里百炼 text-embedding-v3 1024 维特征向量余弦相似度">
+                        🧬 向量相似度: {{ cite.vectorSimilarity }}
+                      </el-tag>
+                      <el-tag v-if="cite.bm25Score != null" size="small" type="info" title="BM25 倒排索引词频统计原生评分">
+                        📄 BM25: {{ cite.bm25Score }}
+                      </el-tag>
                       <el-tag size="small" type="info">{{ cite.chunkType }}</el-tag>
                       <span class="cite-doc text-truncate" :title="cite.docName">《{{ cite.docName }}》</span>
                     </div>
                     <div class="cite-breadcrumb font-mono text-truncate" :title="cite.breadcrumb">
                       📍 路径: {{ cite.breadcrumb }}
                     </div>
-                    <div class="cite-content font-mono">{{ cite.content }}</div>
+                    <div class="cite-content markdown-body" v-html="renderMarkdown(cite.content)"></div>
                   </div>
                 </div>
               </div>
@@ -266,6 +304,16 @@
                   <el-icon v-if="!isRunningAiBenchmark"><VideoPlay /></el-icon>
                   <span>调用 AI 大模型阅读切片并出题评测</span>
                 </el-button>
+
+                <el-button
+                  type="info"
+                  plain
+                  size="large"
+                  @click="openBenchmarkHistoryDrawer"
+                >
+                  <el-icon><Clock /></el-icon>
+                  <span>历史评测报告 ({{ benchmarkHistoryTotal }} 份)</span>
+                </el-button>
               </div>
 
               <div class="benchmark-config-right">
@@ -275,17 +323,13 @@
               </div>
             </div>
 
-            <div class="benchmark-tip-box">
-              <span>💡 <strong>真实 AI 出题机制</strong>：系统将已入库切片发送给配置的大模型，由大模型深度理解切片语义，逆向生成单跳事实、跨段推理、表格提取与对抗诱导四大象限考题及标准黄金答案；随后通过真实 BM25 倒排索引逐题检验 Top-4 召回率与 Bad-Case，<strong>彻底拒绝纯正则匹配与 Mock 假数据</strong>。</span>
-            </div>
-
             <!-- 正在运行 AI 评测的动态状态卡片 -->
             <div v-if="isRunningAiBenchmark" class="benchmark-running-card">
               <div class="running-header">
                 <el-icon class="is-loading" :size="22" color="#409eff"><Loading /></el-icon>
                 <span><strong>AI 大模型正在阅读切片并生成高质量考题中...</strong></span>
               </div>
-              <p class="running-desc">大模型正在对切片进行深度语义理解，逆向生成 4 种维度的考题与黄金标准答案。出题完成后，系统将自动发起全量切片 BM25 检索，检验 Top-4 召回率与 Bad-Case，请稍候约 10~25 秒...</p>
+              <p class="running-desc">大模型正在对切片进行深度语义理解，逆向生成 4 种维度的考题与黄金标准答案。出题完成后，系统将自动发起全量切片 1024 维稠密向量与 BM25 混合检索，检验 Top-4 召回率、置信度门禁与 Bad-Case，请稍候约 10~25 秒...</p>
               <el-progress :percentage="80" :indeterminate="true" :duration="2" status="success" />
             </div>
 
@@ -299,9 +343,15 @@
             <!-- 评测结果报告 -->
             <div v-if="benchmarkReport" class="benchmark-report-section">
               <el-divider content-position="left">
-                <span class="divider-title">
-                  📊 AI 评测报告 (任务ID: <code>{{ benchmarkReport.benchmarkId }}</code> ｜ 倒排切片数: {{ benchmarkReport.totalChunksIndexed }})
-                </span>
+                <div class="divider-title-group">
+                  <span class="divider-title">
+                    📊 AI 评测报告 (任务ID: <code>{{ benchmarkReport.benchmarkId }}</code> ｜ 倒排切片数: {{ benchmarkReport.totalChunksIndexed }})
+                  </span>
+                  <el-button type="primary" link size="small" style="margin-left: 12px" @click="openBenchmarkHistoryDrawer">
+                    <el-icon><Clock /></el-icon>
+                    <span>切换历史评测报告</span>
+                  </el-button>
+                </div>
               </el-divider>
 
               <!-- 4 大核心指标卡片 -->
@@ -310,7 +360,7 @@
                   <div class="metric-card card-recall">
                     <div class="metric-label">Top-4 召回率 (Recall)</div>
                     <div class="metric-value">{{ benchmarkReport.recallRate ?? 0 }}%</div>
-                    <div class="metric-sub">真实命中: {{ benchmarkReport.hitCount }} / {{ benchmarkReport.totalQuestions }} 题</div>
+                    <div class="metric-sub">正向命中: {{ benchmarkReport.hitCount }} / {{ benchmarkReport.positiveQuestions ?? benchmarkReport.totalQuestions }} 题</div>
                   </div>
                 </el-col>
 
@@ -326,7 +376,7 @@
                   <div class="metric-card card-defense">
                     <div class="metric-label">边界对抗拒答率 (Defense)</div>
                     <div class="metric-value">{{ benchmarkReport.adversarialRejectionRate ?? 0 }}%</div>
-                    <div class="metric-sub">负向诱导防御成功率</div>
+                    <div class="metric-sub">防御通过: {{ benchmarkReport.adversarialPassed ?? (benchmarkReport.adversarialQuestions || 0) }} / {{ benchmarkReport.adversarialQuestions ?? 0 }} 题</div>
                   </div>
                 </el-col>
 
@@ -396,9 +446,9 @@
                 <el-table :data="benchmarkReport.questionResults" size="small" border stripe class="questions-table">
                   <el-table-column prop="id" label="题号" width="90" align="center" />
                   
-                  <el-table-column prop="categoryName" label="题型" width="100" align="center">
+                  <el-table-column prop="categoryName" label="题型" width="105" align="center">
                     <template #default="{ row }">
-                      <el-tag size="small" :type="row.isAdversarial ? 'danger' : 'primary'">{{ row.categoryName }}</el-tag>
+                      <el-tag size="small" :type="(row.isAdversarial || row.adversarial) ? 'danger' : 'primary'">{{ row.categoryName }}</el-tag>
                     </template>
                   </el-table-column>
 
@@ -412,26 +462,131 @@
                     </template>
                   </el-table-column>
 
-                  <el-table-column label="检索命中状态" width="110" align="center">
+                  <el-table-column label="检索命中状态" width="130" align="center">
                     <template #default="{ row }">
-                      <el-tag size="small" :type="row.isHit ? 'success' : 'danger'">
-                        {{ row.isHit ? 'HIT 命中' : 'MISS 未命中' }}
+                      <el-tag
+                        size="small"
+                        :type="(row.isHit || row.hit) ? 'success' : 'danger'"
+                        :effect="(row.isHit || row.hit) ? 'dark' : 'light'"
+                      >
+                        <span v-if="row.isAdversarial || row.adversarial">
+                          {{ (row.isHit || row.hit) ? '🛡️ 防御成功' : '⚠️ 越界击穿' }}
+                        </span>
+                        <span v-else>
+                          {{ (row.isHit || row.hit) ? '✓ HIT 命中' : '✗ MISS 未命中' }}
+                        </span>
                       </el-tag>
                     </template>
                   </el-table-column>
 
-                  <el-table-column label="实际召回切片" min-width="180">
+                  <el-table-column label="实际召回切片" min-width="200">
                     <template #default="{ row }">
-                      <div v-if="row.retrievedChunkIds && row.retrievedChunkIds.length > 0">
-                        <span v-for="id in row.retrievedChunkIds" :key="id" class="recalled-tag font-mono">
+                      <div v-if="row.retrievedChunkIds && row.retrievedChunkIds.length > 0" class="recalled-chips">
+                        <el-tag
+                          v-for="id in row.retrievedChunkIds"
+                          :key="id"
+                          size="small"
+                          :type="isRecalledMatch(row, id) ? 'success' : 'info'"
+                          :effect="isRecalledMatch(row, id) ? 'dark' : 'plain'"
+                          class="recalled-chip font-mono"
+                        >
+                          <span v-if="isRecalledMatch(row, id)">🎯 </span>
                           {{ id }}
-                        </span>
+                        </el-tag>
                       </div>
                       <span v-else class="text-muted">无召回</span>
                     </template>
                   </el-table-column>
                 </el-table>
               </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- ==================== 阶段四：智能体 Skill 技能中心 ==================== -->
+        <el-tab-pane name="skills">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Lightning /></el-icon>
+              <span>阶段四：智能体 Skill 技能中心</span>
+              <el-badge :value="skillsList.length" class="tab-badge" type="success" />
+            </span>
+          </template>
+
+          <div class="skills-container">
+            <div class="skills-banner">
+              <div class="skills-banner-text">
+                <h3>🚀 智能体 Skill 技能编排中心 (Industry-grade Skills)</h3>
+                <p>将底层外贸工具（算价、汇率、海运、海关、合规 RAG、Text2SQL）封装为高阶自主技能包，支持声明式提示词注入、热插拔启停与单测调试。</p>
+              </div>
+              <el-button :icon="Refresh" @click="loadSkillsList">刷新技能状态</el-button>
+            </div>
+
+            <div v-loading="isLoadingSkills" class="skills-grid mt-4">
+              <el-card
+                v-for="skill in skillsList"
+                :key="skill.id"
+                class="skill-card"
+                :class="{ 'is-active': skill.status === 'ACTIVE' }"
+                shadow="hover"
+              >
+                <div class="skill-card-header">
+                  <div class="skill-title-wrap">
+                    <el-icon :size="24" class="skill-icon"><component :is="skill.icon || 'Opportunity'" /></el-icon>
+                    <div>
+                      <h4 class="skill-name">{{ skill.name }}</h4>
+                      <el-tag size="small" type="primary" class="skill-category">{{ skill.category }}</el-tag>
+                    </div>
+                  </div>
+                  <el-switch
+                    v-model="skill.status"
+                    active-value="ACTIVE"
+                    inactive-value="INACTIVE"
+                    active-text="启用"
+                    inactive-text="停用"
+                    inline-prompt
+                    @change="handleToggleSkill(skill)"
+                  />
+                </div>
+
+                <p class="skill-desc">{{ skill.description }}</p>
+
+                <!-- 能力标签 -->
+                <div class="skill-tags">
+                  <el-tag v-for="tag in skill.tags" :key="tag" size="small" type="info" effect="plain" class="skill-tag">
+                    # {{ tag }}
+                  </el-tag>
+                </div>
+
+                <!-- 绑定原子工具 -->
+                <div class="skill-bound-tools">
+                  <div class="sub-label">🛠️ 绑定的原子工具链：</div>
+                  <div class="tool-pills">
+                    <el-tag
+                      v-for="t in skill.boundTools"
+                      :key="t.id"
+                      size="small"
+                      type="success"
+                      class="tool-pill"
+                    >
+                      {{ t.name }} ({{ t.id }})
+                    </el-tag>
+                  </div>
+                </div>
+
+                <!-- 性能遥测 -->
+                <div class="skill-telemetry-bar">
+                  <span class="telemetry-item">调用: <strong>{{ skill.invocationCount }}</strong> 次</span>
+                  <span class="telemetry-item">成功率: <strong class="text-success">{{ skill.successRate }}%</strong></span>
+                  <span class="telemetry-item">平均耗时: <strong>{{ skill.avgLatencyMs }}ms</strong></span>
+                </div>
+
+                <div class="skill-card-footer">
+                  <el-button type="primary" size="small" plain @click="openSkillTestModal(skill)">
+                    <el-icon><CaretRight /></el-icon> 单测运行
+                  </el-button>
+                </div>
+              </el-card>
             </div>
           </div>
         </el-tab-pane>
@@ -468,12 +623,242 @@
         </div>
       </div>
     </el-drawer>
+
+    <!-- 评测报告历史记录抽屉 (含分页查询与报告回溯) -->
+    <el-drawer
+      v-model="benchmarkHistoryDrawerVisible"
+      title="📜 RAG 真实基准评测历史报告 (MySQL 持久化)"
+      size="70%"
+      direction="rtl"
+    >
+      <div v-loading="isLoadingBenchmarkHistory" class="history-drawer-content">
+        <div class="history-drawer-tip">
+          <span>💡 每次由大模型深度阅读切片逆向出的考题、判定标准与召回明细均已持久化至 MySQL。点击<strong>【回溯此报告】</strong>即可完整加载并查看当次的所有考题明细与 Bad-Case。</span>
+        </div>
+
+        <el-table :data="benchmarkHistoryRecords" size="small" border stripe class="history-table">
+          <el-table-column prop="id" label="任务ID" width="160" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="font-mono text-truncate">{{ row.id }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="createTime" label="评测时间" width="150" align="center" />
+          <el-table-column prop="docName" label="评测对象" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="totalQuestions" label="考题数" width="70" align="center" />
+          <el-table-column label="Top-4 召回率" width="115" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.recallRate >= 80 ? 'success' : 'warning'">
+                {{ row.recallRate }}% ({{ row.hitCount }}/{{ row.positiveQuestions || row.totalQuestions }})
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="对抗防御率" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.adversarialRejectionRate >= 90 ? 'success' : 'danger'">
+                {{ row.adversarialRejectionRate }}%
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="badCaseCount" label="缺陷数" width="70" align="center">
+            <template #default="{ row }">
+              <span :class="{ 'text-danger': row.badCaseCount > 0 }">{{ row.badCaseCount }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="modelUsed" label="大模型" width="110" align="center" show-overflow-tooltip />
+          <el-table-column label="操作" width="150" align="center" fixed="right">
+            <template #default="{ row }">
+              <el-button type="primary" link size="small" @click="handleViewHistoricalBenchmark(row)">
+                回溯报告
+              </el-button>
+              <el-button type="danger" link size="small" @click="handleDeleteHistoricalBenchmark(row)">
+                删除
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="history-pagination-bar">
+          <el-pagination
+            v-model:current-page="benchmarkHistoryPageNum"
+            v-model:page-size="benchmarkHistoryPageSize"
+            :total="benchmarkHistoryTotal"
+            :page-sizes="[5, 10, 20]"
+            layout="total, sizes, prev, pager, next"
+            @size-change="loadBenchmarkHistory"
+            @current-change="loadBenchmarkHistory"
+          />
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 在线问答历史记录与审计抽屉 -->
+    <el-drawer
+      v-model="qaHistoryDrawerVisible"
+      title="💬 RAG 在线切片溯源问答历史与准确率审计"
+      size="65%"
+      direction="rtl"
+    >
+      <div v-loading="isLoadingQaHistory" class="history-drawer-content">
+        <div class="history-search-bar">
+          <el-input
+            v-model="qaHistoryKeyword"
+            placeholder="搜索历史问答问题关键字..."
+            clearable
+            style="width: 280px"
+            @clear="loadQaHistory"
+            @keyup.enter="loadQaHistory"
+          >
+            <template #append>
+              <el-button :icon="Search" @click="loadQaHistory" />
+            </template>
+          </el-input>
+          <span class="history-stats-badge">共记录 {{ qaHistoryTotal }} 轮真实问答</span>
+        </div>
+
+        <div v-if="qaHistoryRecords.length === 0 && !isLoadingQaHistory" class="empty-chunks">
+          暂无问答历史记录
+        </div>
+
+        <div
+          v-for="item in qaHistoryRecords"
+          :key="item.id"
+          class="qa-history-card"
+        >
+          <div class="qa-history-top">
+            <span class="qa-history-q font-bold">❓ {{ item.question }}</span>
+            <div class="qa-history-rating">
+              <el-tag
+                v-if="item.userRating === 'ACCURATE'"
+                size="small"
+                type="success"
+                effect="dark"
+              >
+                👍 准确
+              </el-tag>
+              <el-tag
+                v-else-if="item.userRating === 'INACCURATE'"
+                size="small"
+                type="danger"
+                effect="dark"
+              >
+                👎 偏差
+              </el-tag>
+              <el-tag v-else size="small" type="info">待审计</el-tag>
+            </div>
+          </div>
+
+          <div class="qa-history-answer font-mono">{{ item.answer }}</div>
+
+          <div class="qa-history-meta">
+            <span>📚 范围: 《{{ item.docName }}》</span>
+            <span>📌 召回切片: {{ item.citationCount }} 个</span>
+            <span>⚡ 耗时: {{ item.latencyMs }}ms</span>
+            <span>🕒 {{ item.createTime }}</span>
+            <div class="qa-history-actions">
+              <el-button
+                size="small"
+                link
+                type="success"
+                @click="handleRateQa(item.id, 'ACCURATE')"
+              >
+                👍 评为准确
+              </el-button>
+              <el-button
+                size="small"
+                link
+                type="danger"
+                @click="handleRateQa(item.id, 'INACCURATE')"
+              >
+                👎 评为偏差
+              </el-button>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                @click="handleInspectHistoricalQa(item)"
+              >
+                载入主视图
+              </el-button>
+              <el-button
+                size="small"
+                link
+                type="danger"
+                @click="handleDeleteQaRecord(item)"
+              >
+                删除
+              </el-button>
+            </div>
+          </div>
+        </div>
+
+        <div class="history-pagination-bar">
+          <el-pagination
+            v-model:current-page="qaHistoryPageNum"
+            v-model:page-size="qaHistoryPageSize"
+            :total="qaHistoryTotal"
+            :page-sizes="[5, 10, 20]"
+            layout="total, sizes, prev, pager, next"
+            @size-change="loadQaHistory"
+            @current-change="loadQaHistory"
+          />
+        </div>
+      </div>
+    </el-drawer>
+
+    <!-- 技能单测调试弹窗 (Dialog) -->
+    <el-dialog
+      v-model="skillTestModalVisible"
+      :title="`🧪 智能体技能单测运行：${currentTestingSkill?.name || ''}`"
+      width="680px"
+      destroy-on-close
+    >
+      <div v-if="currentTestingSkill" class="skill-test-body">
+        <div class="skill-test-header-meta">
+          <el-tag size="small">{{ currentTestingSkill.category }}</el-tag>
+          <span class="text-muted ml-2">已绑定原子工具：{{ currentTestingSkill.toolIds?.join(', ') }}</span>
+        </div>
+
+        <div class="mt-3">
+          <div class="sub-label font-bold mb-1">入参配置 (JSON):</div>
+          <el-input
+            v-model="skillTestParamsText"
+            type="textarea"
+            :rows="6"
+            class="font-mono"
+            placeholder="请输入入参 JSON..."
+          />
+        </div>
+
+        <div v-if="skillTestResult" class="skill-result-box mt-3">
+          <div class="result-header">
+            <el-tag :type="skillTestResult.success ? 'success' : 'danger'" size="small">
+              {{ skillTestResult.success ? 'SUCCESS' : 'FAILED' }}
+            </el-tag>
+            <span class="ml-2 font-mono">总耗时: {{ skillTestResult.totalLatencyMs }}ms</span>
+          </div>
+
+          <div class="sub-label font-bold mt-2">聚合执行结果 (Aggregated Payload):</div>
+          <pre class="result-code font-mono">{{ JSON.stringify(skillTestResult.aggregatedPayload, null, 2) }}</pre>
+        </div>
+      </div>
+
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="skillTestModalVisible = false">关闭</el-button>
+          <el-button type="primary" :loading="isExecutingSkill" @click="handleExecuteSkill">
+            <el-icon v-if="!isExecutingSkill"><CaretRight /></el-icon>
+            <span>立即触发执行</span>
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 import {
   Cpu,
   ChatDotRound,
@@ -486,10 +871,22 @@ import {
   Refresh,
   View,
   Delete,
-  Loading
+  Loading,
+  Clock,
+  List,
+  Search,
+  Connection,
+  Lightning,
+  CaretRight,
+  InfoFilled,
+  TrendCharts,
+  Aim,
+  Sunny,
+  DocumentChecked,
+  Opportunity
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useUserStore } from '@/stores/user'
+import { marked } from 'marked'
 import {
   getKnowledgeDocumentsApi,
   uploadKnowledgeDocumentApi,
@@ -497,8 +894,31 @@ import {
   deleteKnowledgeDocumentApi,
   onlineKnowledgeAskApi,
   runAiSyntheticBenchmarkApi,
-  getLatestBenchmarkReportApi
+  getLatestBenchmarkReportApi,
+  getBenchmarkReportsPageApi,
+  getBenchmarkReportDetailApi,
+  deleteBenchmarkReportApi,
+  getQaRecordsPageApi,
+  rateQaRecordApi,
+  deleteQaRecordApi,
+  getSkillsListApi,
+  toggleSkillApi,
+  executeSkillApi
 } from '@/api/agent'
+
+marked.setOptions({
+  gfm: true,
+  breaks: true
+})
+
+function renderMarkdown(content) {
+  if (!content) return ''
+  try {
+    return marked.parse(content)
+  } catch (e) {
+    return content
+  }
+}
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -521,6 +941,24 @@ const qaTopK = ref(4)
 const qaInputText = ref('')
 const isAskingQa = ref(false)
 const qaResponse = ref(null)
+
+// 问答审计打分与问答历史抽屉
+const currentQaRating = ref(null)
+const qaHistoryDrawerVisible = ref(false)
+const qaHistoryRecords = ref([])
+const qaHistoryTotal = ref(0)
+const qaHistoryPageNum = ref(1)
+const qaHistoryPageSize = ref(10)
+const qaHistoryKeyword = ref('')
+const isLoadingQaHistory = ref(false)
+
+// 评测报告历史抽屉与分页
+const benchmarkHistoryDrawerVisible = ref(false)
+const benchmarkHistoryRecords = ref([])
+const benchmarkHistoryTotal = ref(0)
+const benchmarkHistoryPageNum = ref(1)
+const benchmarkHistoryPageSize = ref(10)
+const isLoadingBenchmarkHistory = ref(false)
 
 const presetQuestions = [
   'TOPCon 580W 的电气参数是什么？',
@@ -558,6 +996,74 @@ const goToModelConfig = () => {
 const goToChatAgent = () => {
   router.push('/chat-agent')
 }
+
+// ======================== 阶段四：智能体 Skill 技能中心 ========================
+const skillsList = ref([])
+const isLoadingSkills = ref(false)
+const skillTestModalVisible = ref(false)
+const currentTestingSkill = ref(null)
+const skillTestParamsText = ref('')
+const isExecutingSkill = ref(false)
+const skillTestResult = ref(null)
+
+const loadSkillsList = async () => {
+  isLoadingSkills.value = true
+  try {
+    const res = await getSkillsListApi()
+    if (res && res.data) {
+      skillsList.value = res.data
+    }
+  } catch (e) {
+    ElMessage.error('加载技能列表失败: ' + e.message)
+  } finally {
+    isLoadingSkills.value = false
+  }
+}
+
+const handleToggleSkill = async (skill) => {
+  try {
+    await toggleSkillApi(skill.id)
+    ElMessage.success(`技能【${skill.name}】状态已切换为: ${skill.status}`)
+  } catch (e) {
+    ElMessage.error('切换技能状态失败: ' + e.message)
+    loadSkillsList()
+  }
+}
+
+const openSkillTestModal = (skill) => {
+  currentTestingSkill.value = skill
+  skillTestParamsText.value = JSON.stringify(skill.sampleInput || {}, null, 2)
+  skillTestResult.value = null
+  skillTestModalVisible.value = true
+}
+
+const handleExecuteSkill = async () => {
+  if (!currentTestingSkill.value) return
+  isExecutingSkill.value = true
+  skillTestResult.value = null
+  try {
+    let params = {}
+    try {
+      params = JSON.parse(skillTestParamsText.value || '{}')
+    } catch (err) {
+      ElMessage.error('输入参数 JSON 格式不合法')
+      isExecutingSkill.value = false
+      return
+    }
+
+    const res = await executeSkillApi(currentTestingSkill.value.id, params)
+    if (res && res.data) {
+      skillTestResult.value = res.data
+      ElMessage.success(`技能单测成功！耗时: ${res.data.totalLatencyMs}ms`)
+      loadSkillsList()
+    }
+  } catch (e) {
+    ElMessage.error('技能运行异常: ' + (e.message || '执行失败'))
+  } finally {
+    isExecutingSkill.value = false
+  }
+}
+
 
 // 加载知识库文档列表
 const loadDocuments = async () => {
@@ -682,6 +1188,7 @@ const handleSendQa = async () => {
 
   isAskingQa.value = true
   qaResponse.value = null
+  currentQaRating.value = null
 
   try {
     const llmCfg = getSavedLlmConfig()
@@ -696,6 +1203,7 @@ const handleSendQa = async () => {
 
     if (res && res.data) {
       qaResponse.value = res.data
+      loadQaHistory()
       ElMessage.success('问答完成，已召回参考切片并生成回答！')
     }
   } catch (err) {
@@ -724,6 +1232,7 @@ const handleRunAiBenchmark = async () => {
 
     if (res && res.data) {
       benchmarkReport.value = res.data
+      loadBenchmarkHistory()
       ElMessage.success(`AI 评测完成！召回率: ${res.data.recallRate}%，对抗防御率: ${res.data.adversarialRejectionRate}%`)
     }
   } catch (err) {
@@ -731,6 +1240,129 @@ const handleRunAiBenchmark = async () => {
   } finally {
     isRunningAiBenchmark.value = false
   }
+}
+
+// 评测报告历史列表加载
+const loadBenchmarkHistory = async () => {
+  isLoadingBenchmarkHistory.value = true
+  try {
+    const res = await getBenchmarkReportsPageApi({
+      pageNum: benchmarkHistoryPageNum.value,
+      pageSize: benchmarkHistoryPageSize.value,
+      docId: selectedDocIdForBenchmark.value === 'all' ? undefined : selectedDocIdForBenchmark.value
+    })
+    if (res && res.data) {
+      benchmarkHistoryRecords.value = res.data.records || []
+      benchmarkHistoryTotal.value = res.data.total || 0
+    }
+  } catch (err) {
+    // 降级不阻断
+  } finally {
+    isLoadingBenchmarkHistory.value = false
+  }
+}
+
+const openBenchmarkHistoryDrawer = () => {
+  benchmarkHistoryDrawerVisible.value = true
+  loadBenchmarkHistory()
+}
+
+// 载入某次历史评测的完整报告
+const handleViewHistoricalBenchmark = async (record) => {
+  try {
+    const res = await getBenchmarkReportDetailApi(record.id)
+    if (res && res.data) {
+      benchmarkReport.value = res.data
+      benchmarkHistoryDrawerVisible.value = false
+      ElMessage.success(`已载入历史评测报告: ${record.id} (召回率: ${record.recallRate}%)`)
+    }
+  } catch (err) {
+    ElMessage.error('获取历史报告详情失败: ' + (err.message || '网络异常'))
+  }
+}
+
+// 删除历史评测报告
+const handleDeleteHistoricalBenchmark = async (record) => {
+  try {
+    await ElMessageBox.confirm(`确定删除评测任务 ${record.id} 吗？`, '提示', {
+      type: 'warning'
+    })
+    await deleteBenchmarkReportApi(record.id)
+    ElMessage.success('已删除历史评测报告')
+    loadBenchmarkHistory()
+    if (benchmarkReport.value?.benchmarkId === record.id) {
+      benchmarkReport.value = null
+    }
+  } catch (_) {}
+}
+
+// 加载在线问答历史
+const loadQaHistory = async () => {
+  isLoadingQaHistory.value = true
+  try {
+    const res = await getQaRecordsPageApi({
+      pageNum: qaHistoryPageNum.value,
+      pageSize: qaHistoryPageSize.value,
+      keyword: qaHistoryKeyword.value || undefined
+    })
+    if (res && res.data) {
+      qaHistoryRecords.value = res.data.records || []
+      qaHistoryTotal.value = res.data.total || 0
+    }
+  } catch (err) {
+    // 降级不阻断
+  } finally {
+    isLoadingQaHistory.value = false
+  }
+}
+
+const openQaHistoryDrawer = () => {
+  qaHistoryDrawerVisible.value = true
+  loadQaHistory()
+}
+
+// 标记问答人工评价 (准确率审计)
+const handleRateQa = async (qaId, rating) => {
+  if (!qaId) return
+  try {
+    await rateQaRecordApi(qaId, { rating })
+    currentQaRating.value = rating
+    ElMessage.success(rating === 'ACCURATE' ? '已标记为准确 👍' : '已标记为存在偏差 👎')
+    loadQaHistory()
+  } catch (err) {
+    ElMessage.error('打分失败: ' + (err.message || '网络异常'))
+  }
+}
+
+// 删除单条问答记录
+const handleDeleteQaRecord = async (record) => {
+  try {
+    await ElMessageBox.confirm('确定删除该条问答记录吗？', '提示', { type: 'warning' })
+    await deleteQaRecordApi(record.id)
+    ElMessage.success('已删除问答记录')
+    loadQaHistory()
+  } catch (_) {}
+}
+
+// 载入历史问答到主视图
+const handleInspectHistoricalQa = (record) => {
+  let citations = []
+  try {
+    if (record.citationsJson) {
+      citations = JSON.parse(record.citationsJson)
+    }
+  } catch (_) {}
+  qaResponse.value = {
+    id: record.id,
+    question: record.question,
+    answer: record.answer,
+    citations: citations,
+    latencyMs: record.latencyMs,
+    modelUsed: record.modelUsed
+  }
+  currentQaRating.value = record.userRating || null
+  qaHistoryDrawerVisible.value = false
+  ElMessage.success('已将历史问答加载至主视图')
 }
 
 // 四象限表格数据映射
@@ -756,8 +1388,19 @@ const formatFileSize = (bytes) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
+// 检查实际召回切片是否命中考题依据切片
+const isRecalledMatch = (row, chunkId) => {
+  if (!row || !chunkId || !row.expectedChunkId) return false
+  if (row.expectedChunkId === 'NONE') return false
+  const expectedList = String(row.expectedChunkId).split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
+  return expectedList.includes(String(chunkId).trim())
+}
+
 onMounted(async () => {
   loadDocuments()
+  loadBenchmarkHistory()
+  loadQaHistory()
+  loadSkillsList()
   try {
     const res = await getLatestBenchmarkReportApi()
     if (res && res.data) {
@@ -1199,6 +1842,18 @@ onMounted(async () => {
   margin-top: 14px;
 }
 
+.recalled-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.recalled-chip {
+  margin: 0 !important;
+  font-size: 11px;
+}
+
 .recalled-tag {
   display: inline-block;
   background: #f1f5f9;
@@ -1318,4 +1973,441 @@ onMounted(async () => {
   max-width: 500px;
   line-height: 1.5;
 }
+
+.qa-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.qa-rating-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.rating-tip {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.rating-feedback-status {
+  font-size: 13px;
+  font-weight: 600;
+  color: #10b981;
+  margin-left: 6px;
+}
+
+.divider-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 历史抽屉样式 */
+.history-drawer-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 20px;
+}
+
+.history-drawer-tip {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #166534;
+  line-height: 1.5;
+}
+
+.history-search-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-stats-badge {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.history-table {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.history-pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+}
+
+.text-danger {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.qa-history-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qa-history-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.qa-history-q {
+  font-size: 14px;
+  color: #1e293b;
+  line-height: 1.4;
+}
+
+.qa-history-answer {
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.qa-history-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: #64748b;
+  padding-top: 4px;
+}
+
+.qa-history-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ==================== 阶段四：意图路由 200 题基准评测样式 ==================== */
+.intent-benchmark-container {
+  padding: 8px 0;
+}
+
+.confusion-matrix-box {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.cm-header h4 {
+  margin: 0;
+  font-size: 15px;
+  color: #1e293b;
+}
+
+.cm-table-wrap {
+  overflow-x: auto;
+}
+
+.confusion-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: center;
+  font-size: 13px;
+}
+
+.confusion-table th,
+.confusion-table td {
+  padding: 10px 14px;
+  border: 1px solid #e2e8f0;
+}
+
+.confusion-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+
+.corner-header {
+  background: #f1f5f9 !important;
+  color: #334155 !important;
+}
+
+.row-label {
+  background: #f8fafc;
+  font-weight: 600;
+  text-align: left;
+  color: #1e293b;
+}
+
+.cm-cell {
+  font-family: monospace;
+  font-size: 14px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.cm-hit {
+  background-color: #dcfce7 !important;
+  color: #15803d !important;
+}
+
+.cm-miss {
+  background-color: #fee2e2 !important;
+  color: #b91c1c !important;
+}
+
+.section-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-title-bar h4 {
+  margin: 0;
+  font-size: 15px;
+  color: #1e293b;
+}
+
+.pruning-text {
+  font-size: 11px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* ==================== 阶段五：智能体 Skill 技能中心样式 ==================== */
+.skills-container {
+  padding: 8px 0;
+}
+
+.skills-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: linear-gradient(135deg, #eff6ff 0%, #e0f2fe 100%);
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.skills-banner-text h3 {
+  margin: 0 0 6px 0;
+  color: #1e3a8a;
+  font-size: 16px;
+}
+
+.skills-banner-text p {
+  margin: 0;
+  color: #3b82f6;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 16px;
+}
+
+.skill-card {
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.skill-card.is-active {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.1);
+}
+
+.skill-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.skill-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.skill-icon {
+  color: #3b82f6;
+}
+
+.skill-name {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  color: #1e293b;
+}
+
+.skill-desc {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.6;
+  margin: 10px 0;
+  min-height: 42px;
+}
+
+.skill-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.skill-bound-tools {
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.skill-bound-tools .sub-label {
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 6px;
+}
+
+.tool-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-telemetry-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #64748b;
+  border-top: 1px dashed #e2e8f0;
+  padding-top: 10px;
+  margin-bottom: 10px;
+}
+
+.skill-card-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.skill-test-header-meta {
+  display: flex;
+  align-items: center;
+}
+
+.skill-result-box {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+}
+
+.result-code {
+  background: #0f172a;
+  color: #38bdf8;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.markdown-body {
+  line-height: 1.6;
+  font-size: 14px;
+  color: #303133;
+  word-break: break-word;
+
+  p {
+    margin-bottom: 8px;
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  strong {
+    color: #1e293b;
+    font-weight: 600;
+  }
+
+  code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 13px;
+    color: #e11d48;
+  }
+
+  pre {
+    background: #1e293b;
+    color: #f8fafc;
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 13px;
+    margin: 8px 0;
+  }
+
+  ul, ol {
+    padding-left: 20px;
+    margin-bottom: 8px;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 8px 0;
+
+    th, td {
+      border: 1px solid #e2e8f0;
+      padding: 6px 12px;
+      text-align: left;
+    }
+
+    th {
+      background: #f8fafc;
+      font-weight: 600;
+    }
+  }
+}
 </style>
+

@@ -1,5 +1,8 @@
 # TradeAgent · 工业级外贸 AI 智能体工作流平台 (开源脱敏重构版)
 
+> **📅 文档最后更新**：2026-10-20  
+> **🔄 当前开发阶段**：RAG 知识库体系已生产就绪（召回率 90%、对抗防御 100%），智能体对话真实联通改造中
+
 > **面向外贸出海全链路的分布式 AI Agent 协同平台**  
 > 涵盖多源拓客采集、N+4 市场洞察、AST/表格结构化 RAG、IM 实时聊天与画像抽取、DAG 决策调度、无字图表视觉降级、Saga 补偿邮件营销以及飞书生态深度集成。
 
@@ -52,8 +55,30 @@
                                              │
                                              ▼
                                   [ 基础组件与基础设施 ]
-           MySQL 8 (业务与审计)  │  Redis 7 (Lua原子限流/缓存)  │  Milvus (向量检索)
+           MySQL 8 (业务与审计)  │  Redis 7 (Lua原子限流/缓存)  │  pgvector (HNSW向量检索)
 ```
+
+---
+
+## ✅ 当前已完成的核心模块（生产就绪状态）
+
+### RAG 知识库与基准评测体系（完全生产就绪 ✅）
+
+| 指标 | 当前实测值 | 技术实现 |
+| :--- | :--- | :--- |
+| **Top-4 召回率** | **90.0%** (20 题真实大模型评测) | pgvector HNSW + BM25 倒排双路混合检索，3 倍大候选池精排 |
+| **对抗诱导防御率** | **100%** (10 道超纲题全部拒答) | 核心实体覆盖率校验 + 0.40 置信度安全门禁 |
+| **单题检索均延** | **245 ms** | 内存 BM25 倒排 + pgvector ANN 并发检索 |
+| **文档持久化** | MySQL 790 条切片 + pgvector 693 条向量 | 双引擎持久化，服务重启零数据丢失 |
+| **自适应纠偏** | 出题盲区真题自动纠偏 | 全库反查纠偏机制消灭 ZooKeeper 类误判 |
+
+**已完成功能清单：**
+- ✅ **三级文档解析降级管道**：PDFBox 纯文本 → 300 DPI 栅格化 → Vision 大模型 OCR 兜底
+- ✅ **AST 语法树语义切片**：H1~H6 标题层级面包屑继承，切片与上下文永不脱钩
+- ✅ **阿里百炼 1024 维向量提取**（text-embedding-v3）+ pgvector HNSW 索引
+- ✅ **两阶段实体对齐防击穿机制**：底噪剥离（NOISE_FLOOR=0.38）+ 核心实体覆盖率惩罚
+- ✅ **AI 大模型逆向出题（20 题四象限评测）**：单跳事实 / 多跳对比 / 表格推算 / 对抗诱导
+- ✅ **切片溯源 Citation 在线问答**：回答带引用出处，问答结果持久化 MySQL `rag_qa_record`
 
 ---
 
@@ -128,7 +153,7 @@
 | **多模型与视觉** | Spring AI Vision / PDFBox 3.x | 300DPI 渲染与多模态图表理解 |
 | **数据库 & ORM** | MySQL 8.0+ / MyBatis-Plus 3.5+ | 拦截器物理分页，严格禁用二级缓存 |
 | **分布式缓存** | Redis 7.x / Redisson | Lua 原子脚本限流、会话状态机管理 |
-| **向量检索库** | Milvus 2.4+ / Qdrant (可选轻量版) | 企业级高吞吐 RAG 向量特征存储 |
+| **向量检索库** | PostgreSQL 16 + pgvector 插件 / HNSW 索引 | 本地 Docker 部署，1024 维稠密向量 + ANN 毫秒检索，取代 Milvus 降低运维成本 |
 | **异步与流式** | Project Reactor (Flux) / SSE / ThreadPoolExecutor | 非阻塞流式打字机与有界线程池隔离 |
 | **前端技术栈** | Vue 3.5 / Vite 6 / TypeScript / Ant Design Vue | 响应式 Composition API、Tailwind CSS |
 | **外部生态对接** | 飞书开放平台 SDK / 阿里云 ChatApp (WhatsApp) | Bitable Webhook 驱动与海外社媒通道 |
@@ -197,6 +222,17 @@ java -jar target/tradeagent-server-1.0.0.jar
 | **飞书多维表格集成** | `/api/trade/feishu/bitable/webhook` | `POST` | Webhook 实时触发，异步背调与结构化回写 CRM 表格 |
 | **飞书文档 AST 同步** | `/api/trade/feishu/docs/sync` | `POST` | 开放平台 AST Block API 增量解析，父子标题面包屑分块注入向量库 |
 | **SSE 实时流式对话** | `/api/trade/chat/stream` | `GET` | 打字机流式输出，`doOnCancel` 客户端断连自动中断止损 Token |
+
+### RAG 知识库专用接口（已生产就绪 ✅）
+
+| 能力 | 接口地址 | 说明 |
+| :--- | :--- | :--- |
+| **文档上传入库** | `POST /api/v1/kb/documents/upload` | 三级降级解析 + AST 切片 + 1024 维向量双引擎写入 |
+| **切片检索** | `POST /api/v1/kb/qa/retrieve` | 返回 Top-K 切片 + 三维评分（融合/向量/BM25） |
+| **在线 RAG 问答** | `POST /api/v1/kb/qa/ask` | 召回切片 + 大模型生成 + 引用溯源输出 |
+| **AI 20 题基准评测** | `POST /api/v1/kb/benchmark/ai-run` | 真实大模型逆向出题 + 自动评分 + 报告持久化（超时已修复为 180s）|
+| **历史评测分页** | `GET /api/v1/kb/benchmark/page` | MySQL 分页查询历史评测报告 |
+| **问答打分** | `PUT /api/v1/kb/qa/{id}/rate` | 👍/👎 人工精准度标注 |
 
 ## ⚖️ 免责声明与知识产权保护
 

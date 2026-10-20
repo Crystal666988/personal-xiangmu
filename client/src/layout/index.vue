@@ -54,9 +54,9 @@
           <el-dropdown trigger="click" @command="handleCommand">
             <div class="avatar-wrap">
               <el-avatar :size="32" class="user-avatar">
-                {{ userStore.displayName.slice(0, 1) }}
+                {{ (userStore.displayName || 'U').slice(0, 1) }}
               </el-avatar>
-              <span class="user-name">{{ userStore.displayName }}</span>
+              <span class="user-name">{{ userStore.displayName || '管理员' }}</span>
               <el-icon><CaretBottom /></el-icon>
             </div>
             <template #dropdown>

@@ -1,8 +1,11 @@
 package com.tradeagent.modules.ai.rag.kb;
 
 import com.tradeagent.core.common.ApiResponse;
+import com.tradeagent.core.common.PageResult;
 import com.tradeagent.modules.ai.rag.DocumentChunk;
+import com.tradeagent.modules.ai.rag.benchmark.RagBenchmarkRecord;
 import com.tradeagent.modules.ai.rag.benchmark.RagBenchmarkReport;
+import com.tradeagent.modules.ai.rag.qa.RagQaRecord;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.Resource;
@@ -174,5 +177,79 @@ public class KnowledgeBaseController {
     public ApiResponse<RagBenchmarkReport> getLatestBenchmark() {
         RagBenchmarkReport report = knowledgeBaseService.getLatestBenchmarkReport();
         return ApiResponse.success(report);
+    }
+
+    @Data
+    public static class QaRatingRequest {
+        private String rating; // ACCURATE / INACCURATE / PARTIAL
+        private String feedback;
+    }
+
+    /**
+     * 9. 分页查询历史评测报告列表 (支持文档筛选与按时间倒序)
+     */
+    @GetMapping("/benchmark/page")
+    @Operation(summary = "分页查询历史基准评测报告列表")
+    public ApiResponse<PageResult<RagBenchmarkRecord>> pageBenchmark(
+            @RequestParam(value = "pageNum", defaultValue = "1") int pageNum,
+            @RequestParam(value = "pageSize", defaultValue = "10") int pageSize,
+            @RequestParam(value = "docId", required = false) String docId) {
+        return ApiResponse.success(knowledgeBaseService.pageBenchmarkReports(pageNum, pageSize, docId));
+    }
+
+    /**
+     * 10. 获取历史某次评测的完整报告详情 (包含全部考题、答案与命中明细)
+     */
+    @GetMapping("/benchmark/{id}")
+    @Operation(summary = "查询单次历史评测完整详情报告")
+    public ApiResponse<RagBenchmarkReport> getBenchmarkDetail(@PathVariable("id") String id) {
+        RagBenchmarkReport detail = knowledgeBaseService.getBenchmarkReportDetail(id);
+        if (detail == null) {
+            return ApiResponse.error(404, "未找到该历史评测报告: " + id);
+        }
+        return ApiResponse.success(detail);
+    }
+
+    /**
+     * 11. 删除历史评测报告
+     */
+    @DeleteMapping("/benchmark/{id}")
+    @Operation(summary = "删除历史评测报告")
+    public ApiResponse<Boolean> deleteBenchmark(@PathVariable("id") String id) {
+        boolean ok = knowledgeBaseService.deleteBenchmarkReport(id);
+        return ApiResponse.success(ok);
+    }
+
+    /**
+     * 12. 分页查询在线问答历史记录
+     */
+    @GetMapping("/qa/page")
+    @Operation(summary = "分页查询在线 RAG 问答历史记录")
+    public ApiResponse<PageResult<RagQaRecord>> pageQa(
+            @RequestParam(value = "pageNum", defaultValue = "1") int pageNum,
+            @RequestParam(value = "pageSize", defaultValue = "10") int pageSize,
+            @RequestParam(value = "docId", required = false) String docId,
+            @RequestParam(value = "keyword", required = false) String keyword) {
+        return ApiResponse.success(knowledgeBaseService.pageQaRecords(pageNum, pageSize, docId, keyword));
+    }
+
+    /**
+     * 13. 对在线问答结果进行人工打分与准确率审计 (ACCURATE / INACCURATE)
+     */
+    @PostMapping("/qa/{id}/rate")
+    @Operation(summary = "标记问答结果准确率与审计反馈")
+    public ApiResponse<Boolean> rateQa(@PathVariable("id") String id, @RequestBody QaRatingRequest req) {
+        boolean ok = knowledgeBaseService.rateQaRecord(id, req.getRating(), req.getFeedback());
+        return ApiResponse.success(ok);
+    }
+
+    /**
+     * 14. 删除单条在线问答记录
+     */
+    @DeleteMapping("/qa/{id}")
+    @Operation(summary = "删除单条问答历史记录")
+    public ApiResponse<Boolean> deleteQa(@PathVariable("id") String id) {
+        boolean ok = knowledgeBaseService.deleteQaRecord(id);
+        return ApiResponse.success(ok);
     }
 }

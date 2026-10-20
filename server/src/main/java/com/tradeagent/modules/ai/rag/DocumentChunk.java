@@ -34,6 +34,9 @@ public class DocumentChunk implements Serializable {
     /** 切片类型: TEXT (普通文本) / TABLE (原子化表格) */
     private String chunkType;
 
+    /** 真实 1024 维稠密向量 (Dense Vector Embedding，来自阿里百炼 text-embedding-v3) */
+    private float[] vector;
+
     /** 附加元数据 (行号、原始表头等) */
     private Map<String, Object> metadata;
 }

@@ -3,6 +3,10 @@ package com.tradeagent.modules.ai.chat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeagent.core.conversation.ConversationContextManager;
 import com.tradeagent.core.dag.IntentRouter;
+import com.tradeagent.core.dag.ReActExecutor;
+import com.tradeagent.core.dag.ReActStep;
+import com.tradeagent.modules.ai.tools.ToolDispatchService;
+import com.tradeagent.modules.ai.tools.TurnTelemetry;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -18,22 +22,29 @@ public class AgentContextService {
     private final IntentRouter router;
     private final ObjectMapper json;
     private final ConversationSummaryService summaries;
+    private final ToolDispatchService toolDispatchService;
+    private final ReActExecutor reactExecutor;
 
     public AgentContextService(AgentSessionMapper sessions, AgentSessionService sessionService,
                                ConversationContextManager contexts, IntentRouter router, ObjectMapper json,
-                               ConversationSummaryService summaries) {
+                               ConversationSummaryService summaries, ToolDispatchService toolDispatchService,
+                               ReActExecutor reactExecutor) {
         this.sessions = sessions;
         this.sessionService = sessionService;
         this.contexts = contexts;
         this.router = router;
         this.json = json;
         this.summaries = summaries;
+        this.toolDispatchService = toolDispatchService;
+        this.reactExecutor = reactExecutor;
     }
 
     public record ContextMessage(String role, String content) {}
     public record ContextResult(List<ContextMessage> messages, IntentRouter.Routing routing,
                                 int historyMessageCount, String summaryStatus,
-                                int summaryMessageCount, int unsummarizedMessageCount) {}
+                                int summaryMessageCount, int unsummarizedMessageCount,
+                                TurnTelemetry telemetry,
+                                List<ReActStep> reactSteps) {}
 
     public ContextResult prepare(String tenantId, String sessionId, String currentMessageId) {
         AgentSession session = sessions.selectById(sessionId);
@@ -82,14 +93,20 @@ public class AgentContextService {
         }
         int recentStart = contexts.recentHistoryStart(history);
         var summary = summaries.resolve(tenantId, sessionId, sources.subList(0, recentStart));
-        List<Message> prompt = contexts.buildContextPrompt(summary.text(), router.describeTools(routing),
+
+        // 真实调度 ReAct 决策循环并生成全链路步骤轨迹 (Thought -> Action -> Observation)
+        List<ReActStep> reactSteps = reactExecutor.executeReActLoop(current.getContent(), routing);
+        TurnTelemetry telemetry = reactExecutor.toTurnTelemetry(reactSteps);
+
+        List<Message> prompt = contexts.buildContextPrompt(summary.text(),
+                router.describeToolsWithTelemetry(routing, telemetry),
                 history.subList(recentStart, history.size()),
                 current.getContent()).getInstructions();
         List<ContextMessage> messages = prompt.stream().map(m -> new ContextMessage(
                 m instanceof SystemMessage ? "system" : m instanceof AssistantMessage ? "assistant" : "user",
                 m.getContent())).toList();
         return new ContextResult(messages, routing, history.size() - recentStart, summary.status(),
-                summary.coveredCount(), recentStart - summary.coveredCount());
+                summary.coveredCount(), recentStart - summary.coveredCount(), telemetry, reactSteps);
     }
 
     private String attachmentField(AgentMessage message, String field) {
