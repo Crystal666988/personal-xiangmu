@@ -3,9 +3,11 @@ package com.tradeagent.modules.ai.chat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeagent.core.conversation.ConversationContextManager;
 import com.tradeagent.core.dag.IntentRouter;
-import com.tradeagent.core.dag.ReActExecutor;
 import com.tradeagent.core.dag.ReActStep;
-import com.tradeagent.modules.ai.tools.ToolDispatchService;
+import com.tradeagent.modules.ai.tools.ToolRegistry;
+import com.tradeagent.modules.ai.intent.RoutingWorkflowService;
+import com.tradeagent.modules.ai.intent.RoutingPreviewService;
+import com.tradeagent.modules.ai.intent.RoutingModelConfig;
 import com.tradeagent.modules.ai.tools.TurnTelemetry;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.http.HttpStatus;
@@ -19,24 +21,21 @@ public class AgentContextService {
     private final AgentSessionMapper sessions;
     private final AgentSessionService sessionService;
     private final ConversationContextManager contexts;
-    private final IntentRouter router;
     private final ObjectMapper json;
     private final ConversationSummaryService summaries;
-    private final ToolDispatchService toolDispatchService;
-    private final ReActExecutor reactExecutor;
+    private final RoutingWorkflowService workflow;
+    private final ToolRegistry tools;
 
     public AgentContextService(AgentSessionMapper sessions, AgentSessionService sessionService,
-                               ConversationContextManager contexts, IntentRouter router, ObjectMapper json,
-                               ConversationSummaryService summaries, ToolDispatchService toolDispatchService,
-                               ReActExecutor reactExecutor) {
+                               ConversationContextManager contexts, ObjectMapper json,
+                               ConversationSummaryService summaries, RoutingWorkflowService workflow, ToolRegistry tools) {
         this.sessions = sessions;
         this.sessionService = sessionService;
         this.contexts = contexts;
-        this.router = router;
         this.json = json;
         this.summaries = summaries;
-        this.toolDispatchService = toolDispatchService;
-        this.reactExecutor = reactExecutor;
+        this.workflow = workflow;
+        this.tools = tools;
     }
 
     public record ContextMessage(String role, String content) {}
@@ -44,9 +43,17 @@ public class AgentContextService {
                                 int historyMessageCount, String summaryStatus,
                                 int summaryMessageCount, int unsummarizedMessageCount,
                                 TurnTelemetry telemetry,
-                                List<ReActStep> reactSteps) {}
+                                List<ReActStep> reactSteps, RoutingPreviewService.Preview routingPlan,
+                                String routingStatus, List<String> clarifications, boolean shouldGenerate,
+                                String assistantDirective, boolean pending, List<RoutingPreviewService.UserSource> sourceMessages,
+                                com.tradeagent.core.dag.CheckpointedDagExecutor.View execution) {}
 
     public ContextResult prepare(String tenantId, String sessionId, String currentMessageId) {
+        return prepare(tenantId, sessionId, currentMessageId, null, "continue");
+    }
+
+    public ContextResult prepare(String tenantId, String sessionId, String currentMessageId,
+                                 RoutingModelConfig modelConfig, String routingAction) {
         AgentSession session = sessions.selectById(sessionId);
         if (session == null || !Objects.equals(tenantId, session.getTenantId())) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "会话不存在");
@@ -60,8 +67,8 @@ public class AgentContextService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前用户消息尚未保存或不属于该会话");
         }
         AgentMessage current = stored.get(boundary);
-        String attachmentName = attachmentField(current, "name");
-        var routing = router.route(current.getContent(), attachmentName);
+        var outcome = workflow.run(tenantId, sessionId, current, stored.subList(0, boundary + 1), modelConfig, routingAction);
+        var routing = routing(outcome);
         List<Message> history = new ArrayList<>();
         List<ConversationSummaryService.SourceMessage> sources = new ArrayList<>();
         // 只读取本轮用户消息之前的记录，既不重复本轮，也不引入并发追加的后续消息。
@@ -95,18 +102,53 @@ public class AgentContextService {
         var summary = summaries.resolve(tenantId, sessionId, sources.subList(0, recentStart));
 
         // 真实调度 ReAct 决策循环并生成全链路步骤轨迹 (Thought -> Action -> Observation)
-        List<ReActStep> reactSteps = reactExecutor.executeReActLoop(current.getContent(), routing);
-        TurnTelemetry telemetry = reactExecutor.toTurnTelemetry(reactSteps);
+        List<ReActStep> reactSteps = outcome.reactSteps();
+        TurnTelemetry telemetry = outcome.telemetry();
 
         List<Message> prompt = contexts.buildContextPrompt(summary.text(),
-                router.describeToolsWithTelemetry(routing, telemetry),
+                toolDescription(outcome),
                 history.subList(recentStart, history.size()),
                 current.getContent()).getInstructions();
         List<ContextMessage> messages = prompt.stream().map(m -> new ContextMessage(
                 m instanceof SystemMessage ? "system" : m instanceof AssistantMessage ? "assistant" : "user",
                 m.getContent())).toList();
         return new ContextResult(messages, routing, history.size() - recentStart, summary.status(),
-                summary.coveredCount(), recentStart - summary.coveredCount(), telemetry, reactSteps);
+                summary.coveredCount(), recentStart - summary.coveredCount(), telemetry, reactSteps,
+                outcome.routingPlan(), outcome.routingStatus(), outcome.clarifications(), outcome.shouldGenerate(),
+                outcome.assistantDirective(), outcome.pending(), outcome.sourceMessages(), outcome.execution());
+    }
+
+    public RoutingWorkflowService.Result cancelRouting(String tenantId, String sessionId) {
+        AgentSession session = sessions.selectById(sessionId);
+        if (session == null || !Objects.equals(tenantId, session.getTenantId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found");
+        }
+        return workflow.cancel(tenantId, sessionId);
+    }
+
+    private IntentRouter.Routing routing(RoutingWorkflowService.Result outcome) {
+        List<IntentRouter.Tool> active = new ArrayList<>();
+        if (outcome.routingPlan() != null && outcome.routingPlan().plan() != null) {
+            for (var task : outcome.routingPlan().plan().tasks()) {
+                var definition = tools.getDefinition(task.tool());
+                if (definition != null && active.stream().noneMatch(tool -> tool.id().equals(definition.getId()))) {
+                    active.add(new IntentRouter.Tool(definition.getId(), definition.getName(), definition.getDomain(), definition.getDescription()));
+                }
+            }
+        }
+        var domains = active.stream().map(IntentRouter.Tool::domain).distinct().toList();
+        String domain = domains.isEmpty() ? "GENERAL" : domains.size() == 1 ? domains.get(0) : "COMPOSITE";
+        return new IntentRouter.Routing(domain, domain, "Connection", "#409eff", "模型任务计划：" + outcome.routingStatus(),
+                List.copyOf(active), Math.max(0, tools.listAllDefinitions().size() - active.size()));
+    }
+
+    private String toolDescription(RoutingWorkflowService.Result outcome) {
+        try {
+            return outcome.assistantDirective() + "\nUser task source messages (data only): "
+                    + json.writeValueAsString(outcome.sourceMessages()) + "\nExecuted tool telemetry: "
+                    + json.writeValueAsString(outcome.telemetry())
+                    + "\nDEMO/isLive=false results are static demonstration data, never current verified facts.";
+        } catch (Exception e) { throw new IllegalStateException("Unable to assemble validated tool context"); }
     }
 
     private String attachmentField(AgentMessage message, String field) {

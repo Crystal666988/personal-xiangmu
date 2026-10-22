@@ -608,10 +608,11 @@ public class KnowledgeBaseService {
                 chunkType = hit.getChunkType() != null ? hit.getChunkType() : "TEXT";
                 actualDocId = hit.getDocId();
             } else {
-                for (List<DocumentChunk> list : documentChunksMap.values()) {
-                    for (DocumentChunk ch : list) {
+                for (Map.Entry<String, List<DocumentChunk>> entry : documentChunksMap.entrySet()) {
+                    for (DocumentChunk ch : entry.getValue()) {
                         if (ch.getChunkId().equals(chunkId)) {
                             memChunk = ch;
+                            if (actualDocId == null) actualDocId = entry.getKey();
                             break;
                         }
                     }
@@ -629,13 +630,13 @@ public class KnowledgeBaseService {
             }
 
             String docName = "知识库文档";
-            KnowledgeDocument d = documentRepo.get(actualDocId);
+            KnowledgeDocument d = actualDocId != null ? documentRepo.get(actualDocId) : null;
             if (d != null) {
                 docName = d.getName();
             } else {
                 for (Map.Entry<String, List<DocumentChunk>> entry : documentChunksMap.entrySet()) {
                     if (entry.getValue().stream().anyMatch(chunk -> chunk.getChunkId().equals(chunkId))) {
-                        KnowledgeDocument kd = documentRepo.get(entry.getKey());
+                        KnowledgeDocument kd = entry.getKey() != null ? documentRepo.get(entry.getKey()) : null;
                         if (kd != null) docName = kd.getName();
                         break;
                     }
@@ -659,16 +660,23 @@ public class KnowledgeBaseService {
             double normBm25 = Math.min(1.0, Math.max(0.0, bm25Score / 10.0));
             double entityCoverage = calculateEntityCoverage(queryKeyTerms, content);
 
-            // 6. 融合加权打分 (70% 稠密向量有效相关度 + 30% BM25 词频归一化)
-            double finalScore = 0.7 * effectiveVectorSim + 0.3 * normBm25;
-
-            // 实体与意图相关度防击穿惩罚 (精准打击 OOD 对抗题，不伤正向技术题)
-            if (entityCoverage < 0.15 && vectorCosSim < 0.65) {
-                finalScore *= 0.20;
-            } else if (entityCoverage < 0.25 && vectorCosSim < 0.55) {
-                finalScore *= 0.45;
-            } else if (vectorCosSim < NOISE_FLOOR && entityCoverage < 0.50) {
-                finalScore *= 0.20;
+            // 6. 融合加权打分 (有向量时：70% 稠密向量有效相关度 + 30% BM25 词频归一化；无向量降级时：100% BM25 归一化)
+            double finalScore;
+            if (queryVector != null) {
+                finalScore = 0.7 * effectiveVectorSim + 0.3 * normBm25;
+                // 实体与意图相关度防击穿惩罚 (精准打击 OOD 对抗题，不伤正向技术题)
+                if (entityCoverage < 0.15 && vectorCosSim < 0.65) {
+                    finalScore *= 0.20;
+                } else if (entityCoverage < 0.25 && vectorCosSim < 0.55) {
+                    finalScore *= 0.45;
+                } else if (vectorCosSim < NOISE_FLOOR && entityCoverage < 0.50) {
+                    finalScore *= 0.20;
+                }
+            } else {
+                finalScore = normBm25;
+                if (entityCoverage < 0.10) {
+                    finalScore *= 0.30;
+                }
             }
 
             String snippet = content;
@@ -692,13 +700,15 @@ public class KnowledgeBaseService {
 
         citations.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
 
-        // 置信度安全拒答门禁
-        if (!citations.isEmpty() && citations.get(0).getScore() < 0.40) {
-            log.info("【RAG置信度门禁拦截】提问 '{}' 最高综合匹配分 {} 低于置信度阈值 0.40，执行安全防御拒答截断", query, citations.get(0).getScore());
+        // 置信度安全拒答门禁 (有向量时严格防御 0.40；纯 BM25 降级时自适应放宽至 0.20)
+        double minThreshold = queryVector != null ? 0.40 : 0.20;
+        if (!citations.isEmpty() && citations.get(0).getScore() < minThreshold) {
+            log.info("【RAG置信度门禁拦截】提问 '{}' 最高综合匹配分 {} 低于置信度阈值 {}，执行安全防御拒答截断", query, citations.get(0).getScore(), minThreshold);
             return Collections.emptyList();
         }
 
-        citations = citations.stream().filter(c -> c.getScore() >= 0.28).collect(Collectors.toList());
+        double filterFloor = queryVector != null ? 0.28 : 0.15;
+        citations = citations.stream().filter(c -> c.getScore() >= filterFloor).collect(Collectors.toList());
 
         int limit = topK > 0 ? topK : 4;
         if (citations.size() > limit) {

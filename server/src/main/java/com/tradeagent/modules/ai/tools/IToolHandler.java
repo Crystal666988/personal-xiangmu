@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * 可执行工具统一接口
  */
-public interface IToolHandler {
+public interface IToolHandler extends AgentTool {
 
     /**
      * 获取工具元数据定义与入参规范

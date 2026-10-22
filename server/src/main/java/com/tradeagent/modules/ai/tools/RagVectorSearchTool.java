@@ -33,35 +33,23 @@ public class RagVectorSearchTool implements IToolHandler {
         example.put("query", "TOPCon 580W 组件质保与衰减率参数");
         example.put("topK", 3);
 
-        return ToolDefinition.builder()
+        return ToolDefinition.builder().readOnly(true)
                 .id("rag_vector_search")
                 .name("工业知识库切片检索器")
                 .domain("KNOWLEDGE")
-                .description("在离线已切片的 Markdown/PDF 规范文档中，基于倒排索引与 BM25 相似度召回最相关的技术切片")
+                .description("Retrieve citations from the local knowledge base; use only returned citations.")
                 .parameterSchema(schema)
                 .exampleQuery(example)
                 .build();
     }
 
     @Override
-    public Object execute(Map<String, Object> params) {
-        String query = params != null && params.get("query") != null ? params.get("query").toString() : "太阳能光伏规范手册";
-        int topK = 3;
-        if (params != null && params.get("topK") != null) {
-            try {
-                topK = Integer.parseInt(params.get("topK").toString());
-            } catch (Exception ignored) {}
-        }
-        String docId = params != null && params.get("docId") != null ? params.get("docId").toString() : null;
-
-        // 真实调用知识库切片检索
-        List<KnowledgeBaseService.RetrievalCitation> citations = knowledgeBaseService.retrieveCitations(query, docId, topK);
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("query", query);
-        result.put("retrievedCount", citations.size());
-        result.put("citations", citations);
-
-        return result;
+    public Object execute(Map<String, Object> input) {
+        var prepared = TradeToolRules.prepare("rag_vector_search", input);
+        var p = prepared.parameters();
+        var citations = knowledgeBaseService.retrieveCitations(TradeToolRules.text(p, "query"), null,
+                TradeToolRules.integer(p, "topK"));
+        return Map.of("query", p.get("query"), "retrievedCount", citations.size(), "citations", citations,
+                "dataSource", "LOCAL_KNOWLEDGE_BASE", "parameterSources", prepared.parameterSources());
     }
 }

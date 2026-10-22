@@ -371,6 +371,18 @@
               </div>
             </div>
 
+                        <!-- HITL 审批门禁与执行存档卡片 -->
+            <HitlApprovalCard
+              v-if="currentExecution"
+              :execution="currentExecution"
+              :busy="executionBusy"
+              :unavailable="Boolean(executionUnavailable[currentSessionId])"
+              @decision="submitApproval"
+              @resume="resumeExecution"
+              @cancel="cancelExecution"
+              @refresh="refreshExecution(currentSessionId)"
+            />
+
             <!-- 空状态引导 -->
             <div v-if="currentMessages.length === 0" class="empty-chat-guide">
               <el-icon :size="52" color="#c0c4cc"><ChatDotSquare /></el-icon>
@@ -759,6 +771,13 @@ import {
   Operation,
   Select
 } from '@element-plus/icons-vue'
+import HitlApprovalCard from './components/HitlApprovalCard.vue'
+import {
+  fetchActiveExecutionApi,
+  decideApprovalApi,
+  resumeCheckpointApi,
+  cancelCheckpointApi
+} from '@/api/execution'
 import {
   prepareSessionContextApi,
   uploadAndExtractDocumentApi,
@@ -1065,6 +1084,76 @@ const getStepTypeDisplayLabel = (type) => {
   }
   return map[type] || type || 'STEP'
 }
+
+// HITL 审批与执行检查点状态管理
+const executions = ref({})
+const executionUnavailable = ref({})
+const executionBusy = ref(false)
+const currentExecution = computed(() => executions.value[currentSessionId.value] || null)
+
+const sessionTenantId = (sessionId) => {
+  const session = sessions.value.find(s => s.id === sessionId)
+  return String(session?.tenantId || '1001')
+}
+
+function applyExecution(execution) {
+  if (!execution || !execution.sessionId) return
+  const sessionId = execution.sessionId
+  const previous = executions.value[sessionId]
+  if (previous && ((previous.checkpointId === execution.checkpointId && previous.version > execution.version)
+      || previous.createdAt > execution.createdAt)) return
+  executions.value[sessionId] = execution
+  executionUnavailable.value[sessionId] = false
+}
+
+async function refreshExecution(sessionId) {
+  if (!sessionId || executionBusy.value) return
+  try {
+    const tenantId = sessionTenantId(sessionId)
+    const result = await fetchActiveExecutionApi(sessionId, tenantId)
+    if (result && result.data) {
+      applyExecution(result.data)
+    }
+  } catch (e) {
+    console.warn('Failed to refresh execution', e)
+    executionUnavailable.value[sessionId] = true
+  }
+}
+
+async function executeCardAction(action) {
+  if (executionBusy.value || isGenerating.value || !currentExecution.value) return
+  const execution = currentExecution.value
+  const sessionId = execution.sessionId
+  executionBusy.value = true
+  try {
+    const tenantId = sessionTenantId(sessionId)
+    const result = await action(execution, tenantId)
+    if (result && result.data) applyExecution(result.data)
+  } catch (e) {
+    ElMessage.error(e?.message || '操作失败')
+  } finally {
+    executionBusy.value = false
+    await refreshExecution(sessionId)
+  }
+}
+
+const submitApproval = (action, params) => executeCardAction((execution, tenant) => decideApprovalApi(execution, tenant, action, params, savedModelConfig.value))
+const resumeExecution = () => executeCardAction((execution, tenant) => resumeCheckpointApi(execution, tenant, savedModelConfig.value))
+const cancelExecution = () => executeCardAction((execution, tenant) => cancelCheckpointApi(execution, tenant))
+
+let executionRefreshTimer
+onMounted(() => {
+  executionRefreshTimer = setInterval(() => {
+    if (currentExecution.value && !['COMPLETED', 'REJECTED', 'ROLLED_BACK'].includes(currentExecution.value.status)
+        && !executionBusy.value && !isGenerating.value) {
+      refreshExecution(currentSessionId.value)
+    }
+  }, 3000)
+})
+
+onUnmounted(() => {
+  if (executionRefreshTimer) clearInterval(executionRefreshTimer)
+})
 
 // 格式化展示 JSON
 const formatJson = (val) => {
@@ -1703,6 +1792,9 @@ const sendMessage = async () => {
   try {
     const result = await prepareSessionContextApi(currentSessionId.value, savedUserMessage.id, contextController.signal)
     preparedContext = result.data
+    if (preparedContext.execution) {
+      applyExecution(preparedContext.execution)
+    }
   } catch (err) {
     if (contextController.signal.aborted) return
     ElMessage.error('上下文准备失败，请重试')

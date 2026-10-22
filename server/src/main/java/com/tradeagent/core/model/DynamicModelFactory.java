@@ -2,219 +2,181 @@ package com.tradeagent.core.model;
 
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.beans.BeansException;
+import org.springframework.ai.openai.api.OpenAiApi.ChatCompletionRequest.ResponseFormat;
+import org.springframework.ai.retry.RetryUtils;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.retry.policy.NeverRetryPolicy;
+import org.springframework.retry.support.RetryTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.URI;
 import java.time.Duration;
+import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-/**
- * 工业级动态模型工厂与生命周期治理中心
- * 
- * 核心技术亮点：
- * 1. 【动态热装配】：运行时根据租户配置动态构建 ChatModel，无需重启 JVM；
- * 2. 【Bean 容器可控注册】：将模型动态注册进 Spring DefaultListableBeanFactory，享受 Spring 统一依赖注入；
- * 3. 【防内存泄漏机制】：
- *    - 维护基于 LRU 与过期机制的 Guava 缓存池；
- *    - 当租户切换模型、更改密钥或实例淘汰时，主动触发 destroySingleton 注销 Spring 单例；
- *    - 阻断底层 Netty / OkHttp 连接池孤儿线程泄漏，防止 Metaspace 膨胀 OOM。
- */
+/** Tenant/configuration-scoped cached models, registered with Spring and evicted together. */
 @Slf4j
 @Component
 public class DynamicModelFactory implements ApplicationContextAware {
-
+    public static final String ROUTING_USAGE = "routing";
     private DefaultListableBeanFactory beanFactory;
-
-    /**
-     * 记录动态注册的 Bean 名称映射：CacheKey -> Spring BeanName
-     */
     private final ConcurrentMap<String, String> registeredBeanNames = new ConcurrentHashMap<>();
-
-    /**
-     * 模型实例缓存池：LRU 淘汰 + 30 分钟无访问过期自动驱逐
-     */
     private final Cache<String, ChatModel> modelCache = CacheBuilder.newBuilder()
-            .maximumSize(100)
-            .expireAfterAccess(Duration.ofMinutes(30))
-            .removalListener(new RemovalListener<String, ChatModel>() {
-                @Override
-                public void onRemoval(RemovalNotification<String, ChatModel> notification) {
-                    handleModelEviction(notification.getKey(), notification.getValue(), notification.getCause().name());
-                }
-            })
-            .build();
+            .maximumSize(100).expireAfterAccess(Duration.ofMinutes(30))
+            .removalListener((RemovalNotification<String, ChatModel> notification) ->
+                    handleModelEviction(notification.getKey())).build();
 
     @Override
-    public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
-        this.beanFactory = (DefaultListableBeanFactory) applicationContext.getAutowireCapableBeanFactory();
+    public void setApplicationContext(ApplicationContext applicationContext) {
+        beanFactory = (DefaultListableBeanFactory) applicationContext.getAutowireCapableBeanFactory();
     }
 
-    /**
-     * 获取或创建指定租户的 ChatModel 实例
-     *
-     * @param config 模型配置
-     * @return 对应的 ChatModel
-     */
-    public ChatModel getOrCreateChatModel(ModelConfig config) {
-        String cacheKey = config.getCacheKey();
+    public synchronized ChatModel getOrCreateChatModel(ModelConfig config) {
+        ModelConfig snapshot = snapshot(config);
+        String cacheKey = snapshot.getCacheKey();
         try {
-            return modelCache.get(cacheKey, () -> createAndRegisterChatModel(config));
+            return modelCache.get(cacheKey, () -> createAndRegisterChatModel(snapshot));
         } catch (Exception e) {
-            log.error("构建 ChatModel 异常, cacheKey: {}, 原因: {}", cacheKey, e.getMessage(), e);
-            throw new RuntimeException("动态构建 AI 模型实例失败: " + e.getMessage(), e);
+            log.warn("ChatModel creation failed for configuration fingerprint {}", cacheKey);
+            throw new IllegalStateException("Unable to create configured AI model");
         }
     }
 
-    /**
-     * 核心创建与 Spring Bean 动态注册逻辑
-     */
-    private synchronized ChatModel createAndRegisterChatModel(ModelConfig config) {
+    private ChatModel createAndRegisterChatModel(ModelConfig config) {
+        if (beanFactory == null) throw new IllegalStateException("Model factory application context is unavailable");
         String cacheKey = config.getCacheKey();
-        String dynamicBeanName = "dynamicChatModel_" + Math.abs(cacheKey.hashCode());
+        // Full SHA-256 fingerprint replaces collision-prone 32-bit String.hashCode bean names.
+        String name = "dynamicChatModel_" + cacheKey.substring(cacheKey.lastIndexOf(':') + 1);
+        ChatModel model = createChatModel(config);
+        beanFactory.registerSingleton(name, model);
+        registeredBeanNames.put(cacheKey, name);
+        return model;
+    }
 
-        log.info("【动态模型工厂】开始构建新模型实例 -> 租户ID: {}, 模型名: {}, BeanName: {}", 
-                config.getTenantId(), config.getModelName(), dynamicBeanName);
+    /** Offline tests may replace construction while retaining real cache/lifecycle behavior. */
+    protected ChatModel createChatModel(ModelConfig config) {
+        boolean routing = ROUTING_USAGE.equals(config.getUsageType());
+        RestClient.Builder rest = RestClient.builder();
+        if (routing) rest.requestFactory(routingRequestFactory());
+        // User baseUrl already includes /v1 or another API prefix. Avoid M2's extra /v1.
+        OpenAiApi api = new OpenAiApi(config.getBaseUrl(), config.getApiKey(), "/chat/completions",
+                "/embeddings", rest, WebClient.builder(), RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER);
+        var options = OpenAiChatOptions.builder().withModel(config.getModelName())
+                .withTemperature(config.getTemperature().floatValue()).withMaxTokens(config.getMaxTokens());
+        if (!routing) return new OpenAiChatModel(api, options.build());
+        RetryTemplate once = new RetryTemplate();
+        once.setRetryPolicy(new NeverRetryPolicy());
+        return new AnnotationChatModel(api, options
+                .withResponseFormat(new ResponseFormat(ResponseFormat.Type.JSON_OBJECT))
+                .withN(1).build(), once);
+    }
 
-        // 1. 基于 OpenAI 协议封装底层 Client (兼容 DeepSeek, 豆包, Qwen, GPT)
-        OpenAiApi openAiApi = new OpenAiApi(config.getBaseUrl(), config.getApiKey());
+    protected ClientHttpRequestFactory routingRequestFactory() {
+        var requests = new SimpleClientHttpRequestFactory();
+        requests.setConnectTimeout(Duration.ofSeconds(3));
+        requests.setReadTimeout(Duration.ofSeconds(12));
+        return requests;
+    }
 
-        // 2. 组装采样参数与模型选项
-        OpenAiChatOptions options = OpenAiChatOptions.builder()
-                .withModel(config.getModelName())
-                .withTemperature(config.getTemperature() != null ? config.getTemperature().floatValue() : 0.7f)
-                .withMaxTokens(config.getMaxTokens())
-                .build();
-
-        // 3. 构造 Spring AI ChatModel 实例
-        OpenAiChatModel chatModel = new OpenAiChatModel(openAiApi, options);
-
-        // 4. 动态注册进 Spring IOC 容器（若已存在先销毁旧单例）
-        if (beanFactory.containsSingleton(dynamicBeanName)) {
-            beanFactory.destroySingleton(dynamicBeanName);
+    private static final class AnnotationChatModel extends OpenAiChatModel {
+        AnnotationChatModel(OpenAiApi api, OpenAiChatOptions options, RetryTemplate once) {
+            super(api, options, null, List.of(), once);
         }
-        beanFactory.registerSingleton(dynamicBeanName, chatModel);
-        registeredBeanNames.put(cacheKey, dynamicBeanName);
-
-        log.info("【动态模型工厂】成功装配并注册模型 Bean: {}", dynamicBeanName);
-        return chatModel;
+        @Override
+        protected boolean isToolCall(ChatResponse response, Set<String> finishReasons) {
+            // M2 has no proxyToolCalls option. Prevent its automatic function loop before
+            // RoutingPlanGenerator inspects and rejects unsolicited tool-call output.
+            return false;
+        }
     }
 
-    /**
-     * 主动驱逐模型（按租户驱逐全部用途模型）
-     *
-     * @param tenantId 租户ID
-     */
-    public void evictTenantModel(Long tenantId) {
+    private static ModelConfig snapshot(ModelConfig config) {
+        Objects.requireNonNull(config, "Model configuration is required");
+        if (config.getTenantId() == null || config.getTenantId() <= 0
+                || config.getApiKey() == null || config.getApiKey().isBlank()
+                || config.getModelName() == null || config.getModelName().isBlank()) {
+            throw new IllegalArgumentException("Tenant, credentials and model are required");
+        }
+        return config.toBuilder().baseUrl(normalizeBaseUrl(config.getBaseUrl()))
+                .apiKey(config.getApiKey().trim()).modelName(config.getModelName().trim())
+                .provider(config.getProvider() == null || config.getProvider().isBlank() ? "openai"
+                        : config.getProvider().trim().toLowerCase(Locale.ROOT))
+                .usageType(config.getUsageType() == null || config.getUsageType().isBlank() ? "DEFAULT" : config.getUsageType().trim())
+                .temperature(config.getTemperature() == null ? 0.7 : config.getTemperature()).build();
+    }
+
+    static String normalizeBaseUrl(String source) {
+        if (source == null || source.isBlank()) throw new IllegalArgumentException("API base URL is required");
+        String base = source.trim().replaceAll("/+$", "");
+        boolean complete = base.endsWith("/chat/completions");
+        if (complete) base = base.substring(0, base.length() - "/chat/completions".length());
+        URI uri = URI.create(base);
+        if (!("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))
+                || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null) {
+            throw new IllegalArgumentException("Invalid API base URL");
+        }
+        if (!complete && (uri.getPath() == null || uri.getPath().isEmpty())) base += "/v1";
+        return base;
+    }
+
+    public synchronized void evictTenantModel(Long tenantId) {
         String prefix = tenantId + ":";
-        registeredBeanNames.keySet().stream()
-                .filter(key -> key.startsWith(prefix))
-                .forEach(key -> {
-                    log.info("【动态模型工厂】接收到租户主动失效指令, 驱逐 Key: {}", key);
-                    modelCache.invalidate(key);
-                });
+        registeredBeanNames.keySet().stream().filter(key -> key.startsWith(prefix))
+                .toList().forEach(modelCache::invalidate);
     }
 
-    /**
-     * 主动驱逐模型（租户更新密钥、切换模型提供商时调用）
-     *
-     * @param tenantId 租户ID
-     * @param usageType 用途类型
-     */
-    public void evictTenantModel(Long tenantId, String usageType) {
-        String prefix = tenantId + ":" + usageType;
-        registeredBeanNames.keySet().stream()
-                .filter(key -> key.startsWith(prefix))
-                .forEach(key -> {
-                    log.info("【动态模型工厂】接收到主动失效指令, 驱逐 Key: {}", key);
-                    modelCache.invalidate(key);
-                });
+    public synchronized void evictTenantModel(Long tenantId, String usageType) {
+        String prefix = tenantId + ":" + usageType + ":";
+        registeredBeanNames.keySet().stream().filter(key -> key.startsWith(prefix))
+                .toList().forEach(modelCache::invalidate);
     }
 
-    /**
-     * 便捷获取租户默认模型
-     *
-     * @param tenantId 租户ID
-     * @return 对应的 ChatModel
-     */
+    private void handleModelEviction(String cacheKey) {
+        String name = registeredBeanNames.remove(cacheKey);
+        if (name != null && beanFactory != null && beanFactory.containsSingleton(name)) beanFactory.destroySingleton(name);
+    }
+
+    /** Legacy demo convenience method; routing preview deliberately never calls this. */
     public ChatModel getModel(Long tenantId) {
-        ModelConfig defaultConfig = ModelConfig.builder()
-                .tenantId(tenantId)
-                .usageType("DEFAULT")
-                .provider("openai")
-                .modelName("gpt-4o-mini")
-                .baseUrl("https://api.openai.com/v1")
-                .apiKey("sk-trade-agent-mock-key")
-                .temperature(0.7)
-                .build();
-        return getOrCreateChatModel(defaultConfig);
+        return getOrCreateChatModel(ModelConfig.builder().tenantId(tenantId).usageType("DEFAULT")
+                .provider("openai").modelName("gpt-4o-mini").baseUrl("https://api.openai.com/v1")
+                .apiKey("sk-trade-agent-mock-key").temperature(0.7).build());
     }
 
-    /**
-     * 预热并探活模型
-     *
-     * @param tenantId 租户ID
-     * @param config 模型配置
-     * @return 探活结果
-     */
     public boolean warmUpModel(Long tenantId, ModelConfig config) {
         config.setTenantId(tenantId);
-        if (config.getUsageType() == null) {
-            config.setUsageType("DEFAULT");
-        }
+        if (config.getUsageType() == null) config.setUsageType("DEFAULT");
         getOrCreateChatModel(config);
         return testConnection(config);
     }
 
-    /**
-     * 模型实例驱逐监听处理函数 (防内存泄漏关键)
-     */
-    private void handleModelEviction(String cacheKey, ChatModel model, String reason) {
-        log.warn("【内存泄漏防御】触发模型实例驱逐 -> CacheKey: {}, 触发原因: {}", cacheKey, reason);
-
-        String beanName = registeredBeanNames.remove(cacheKey);
-        if (beanName != null && beanFactory.containsSingleton(beanName)) {
-            // 1. 显式通知 Spring 容器注销并执行 Bean 销毁生命周期
-            beanFactory.destroySingleton(beanName);
-            log.info("【内存泄漏防御】已成功从 Spring 容器销毁 Singleton Bean: {}", beanName);
-        }
-
-        // 2. 切断引用，提示 JVM GC 回收对象及其关联的底层 HTTP Client 连接池
-        log.info("【内存泄漏防御】完成连接池解绑与孤儿对象回收准备.");
-    }
-
-    /**
-     * 校验模型配置是否合法 (1-Token 极速探针法)
-     *
-     * @param config 待测试的模型配置
-     * @return true 代表连接正常，false 代表鉴权失败或网络不可达
-     */
     public boolean testConnection(ModelConfig config) {
-        log.info("【模型配置测试】正在向 {} 发起 1-Token 极简探针测试...", config.getBaseUrl());
         try {
-            OpenAiApi testApi = new OpenAiApi(config.getBaseUrl(), config.getApiKey());
-            OpenAiChatOptions options = OpenAiChatOptions.builder()
-                    .withModel(config.getModelName())
-                    .withMaxTokens(1)      // 只消耗 1 个 Token，成本几乎为 0
-                    .withTemperature(0.0f)
-                    .build();
-            OpenAiChatModel testModel = new OpenAiChatModel(testApi, options);
-            String probeResult = testModel.call("ping");
-            boolean success = probeResult != null;
-            log.info("【模型配置测试】探针测试完成, 结果: {}", success ? "SUCCESS" : "EMPTY");
-            return success;
+            var options = OpenAiChatOptions.builder().withModel(config.getModelName()).withMaxTokens(1)
+                    .withTemperature(0.0f).build();
+            var api = new OpenAiApi(normalizeBaseUrl(config.getBaseUrl()), config.getApiKey(),
+                    "/chat/completions", "/embeddings", RestClient.builder(), WebClient.builder(),
+                    RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER);
+            return new OpenAiChatModel(api, options).call("ping") != null;
         } catch (Exception e) {
-            log.warn("【模型配置测试】连接失败, 错误信息: {}", e.getMessage());
+            log.warn("Model connection probe failed");
             return false;
         }
     }

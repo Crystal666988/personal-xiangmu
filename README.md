@@ -1,10 +1,28 @@
 # TradeAgent · 工业级外贸 AI 智能体工作流平台 (开源脱敏重构版)
 
-> **📅 文档最后更新**：2026-10-20  
+> **📅 文档最后更新**：2026-10-22（任务一至四完成，全量 162 测通过）  
 > **🔄 当前开发阶段**：RAG 知识库体系已生产就绪（召回率 90%、对抗防御 100%），智能体对话真实联通改造中
 
 > **面向外贸出海全链路的分布式 AI Agent 协同平台**  
 > 涵盖多源拓客采集、N+4 市场洞察、AST/表格结构化 RAG、IM 实时聊天与画像抽取、DAG 决策调度、无字图表视觉降级、Saga 补偿邮件营销以及飞书生态深度集成。
+
+---
+
+## 📌 最新工程里程碑：任务一至四全量落地与回归验证（2026-10-22）
+
+> **当前状态**：任务一（HITL）、任务二（Execution Checkpoints）、任务三（Saga 逆向补偿）、任务四（Reflection 有界纠偏）**已全部完成代码接入并通过全量集成测试（162/162 Tests Passed, 0 Failures, 0 Errors）**。  
+> **下一阶段**：交付给协同开发模型（ChatGPT）继续开发 **任务五（防翻车工程护栏 Guardrails）** 与 **任务六（三层复合记忆体系 Entity & Episodic Memory）**。
+
+### 已完成模块落地摘要（任务一至四）
+
+| 模块 | 核心源码物理路径 | 功能特性与生产级保障 | 验证状态 |
+| :--- | :--- | :--- | :--- |
+| **任务一：HITL 审批门禁** | `server/.../core/dag/HitlApprovalService.java`<br>`server/.../core/dag/HitlRiskEvaluator.java`<br>`client/.../chat-agent/components/HitlApprovalCard.vue` | 对高危写操作（如降价特批、正式发函、锁舱）进行人机协同拦截；生成 `WAITING_APPROVAL` 状态与交互审批卡片；支持人工批准、驳回及参数修订重试。 | ✅ 单元与前后端联调通过 |
+| **任务二：执行存档点 Checkpoints** | `server/.../core/dag/ExecutionCheckpointService.java`<br>`server/.../core/dag/CheckpointedDagExecutor.java` | Redis Hash 级物理持久化执行快照；基于 Lua 脚本与 `HMSET` 实现 Windows Redis 3.2+ 与 Redis 7+ 全版本兼容原子写入；支持宕机断点续传（Resume DAG）。 | ✅ 集成测试与实机重启恢复通过 |
+| **任务三：Saga 逆向柔性补偿** | `server/.../core/dag/SagaCompensationManager.java`<br>`server/.../core/dag/SagaAuditStore.java`<br>`server/.../core/dag/JdbcSagaAuditStore.java`<br>`server/src/main/resources/db/migration/V20261022_01__saga_compensation_log.sql` | 遵循 LIFO 逆向回滚已确认成功的正向写操作；MySQL 追加式审计日志防重；下游写超时/不确定状态严格保持 `EXECUTION_UNCERTAIN`，绝不假回滚。 | ✅ MySQL 审计与逆向补偿测试通过 |
+| **任务四：Reflection 有界纠偏** | `server/.../core/dag/ReflectionCorrectionHandler.java`<br>`server/.../core/dag/exception/ToolExecutionException.java` | 异常细粒度分级（`RECOVERABLE` 参数错误 vs `FATAL` 物理致命异常）；限制单步最多 2 次纠偏预算；预算与纠偏日志同步落入 Redis Checkpoint，重启不刷新预算。 | ✅ 错误分级与自愈循环测试通过 |
+
+---
 
 ---
 
@@ -144,6 +162,246 @@
 
 ---
 
+### 🏆 对照 Carl (youngyangyang04/llm-master) 工业级 Agent 知识体系全景对照与待开发任务书 (ChatGPT 接入开发版)
+
+对照业内权威开源大模型实战体系 [youngyangyang04/llm-master](https://github.com/youngyangyang04/llm-master)（程序员 Carl《代码随想录》团队）的核心架构设计规范，TradeAgent 对 Agent 核心知识点进行了工业级“去伪存真”对齐，并梳理出当前已实现能力与待 ChatGPT 协助落地的全量开发任务书。
+
+#### 1. 架构对照全景总览（已完成能力 vs 待开发全量缺口）
+
+| 知识模块 (llm-master 标准) | 工业核心痛点与原则 | TradeAgent 当前已实现状态 (Current Done) | 待开发全量缺口 (Backlog for ChatGPT) |
+| :--- | :--- | :--- | :--- |
+| **Agent vs Workflow** | 拒绝盲目全自动 ReAct；确定性流程用 Workflow 固化，局部用 Agent 决策 | ✅ **已实现**：`IntentRouter` 单次生成 DAG 任务拓扑与槽位证据，由 `ValidatedPlanExecutor` 确定性编排推进。 | 无（架构形态已完全确立） |
+| **Plan-and-Execute DAG 规划** | 全局任务拆解、依赖拓扑分析、消除工具盲目探索 | ✅ **已实现**：LLM 联合输出 DAG 任务序列，基于前序任务产物自动接力参数。 | 支持执行中途动态二次重规划（Dynamic Re-planning） |
+| **ReAct 思考与行动闭环** | Thought -> Action -> Observation 循环与全链路可观测 | ✅ **已实现**：实时捕获工具调度 Payload、执行耗时、环境物理 Observation，前端提供 ReAct 步骤时间轴。 | 无 |
+| **Failure Modes 防翻车护栏** | 防死循环、防长链路目标漂移（Goal Drift）、防参数幻觉 | ✅ **部分实现**：`EvidencePlanValidator` 强制原文子串零幻觉校验，工具动态剪枝。 | ❌ **缺少**：DAG 最大步数硬熔断器、结构化错误码（Recoverable vs Fatal）、三层上下文分区（防目标漂移）。 |
+| **Multi-Agent Harness 控制外壳** | 架构核心在 Harness 控制层（状态机、持久化、安全边界）而非 Agent 角色扮演 | ✅ **部分实现**：分层意图路由、Redis 防重分布式锁、自适应多轮话题识别与任务流转。 | ❌ **缺少**：Execution Checkpoint 存档点持久化、长事务 Saga 逆向补偿机制。 |
+| **HITL 人机协同审批门禁** | 高危操作（大额折扣、外贸发票生成、外部写操作）禁止 AI 静默执行 | ❌ **尚未实现** | ❌ **核心待开发**：状态机 `WAITING_APPROVAL`、前端交互审批卡片、人工核准/驳回/改参恢复执行。 |
+| **Execution Checkpoints 存档点** | 长耗时执行、等待人工审批或系统重启时状态不丢失，断点续传 | ❌ **尚未实现** | ❌ **核心待开发**：Redis Hash 持久化 DAG 变量池、已完成步与未决步，支持一键恢复执行现场。 |
+| **Saga 分布式柔性逆向补偿** | 外部物理调用无法本地 SQL Rollback，下游失败或审批拒绝必须自动回滚 | ❌ **尚未实现** | ❌ **核心待开发**：工具类注册 `compensate()` 契约，LIFO 逆向补偿栈执行回滚，记录审计日志。 |
+| **Reflection 反思与自愈循环** | 工具入参偶发格式错误不直接抛 500，回传 Error 给 LLM 自我纠偏 | ❌ **尚未实现** | ❌ **核心待开发**：`RecoverableToolException` 捕获，重试计数器（<=2次）触发局部 Prompt 反思自愈。 |
+| **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **已实现**：Working Memory（MySQL 会话持久化 + Redis 滚动摘要截断）。 | ❌ **缺少**：买家画像只填不改提取（Entity Memory）、高分成交案例向量 Few-Shot 沉淀（Episodic Memory）。 |
+| **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **已实现**：RAG 20 题四象限基准、意图 200 题混淆矩阵评测。 | ❌ **缺少**：Agent 执行步数效率（Step Efficiency）、工具误调率与轨迹自动化评测。 |
+| **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **已实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁。 | ❌ **待进阶**：Cross-Encoder 语义深度二次重排（Reranker）。 |
+
+---
+
+#### 2. 全量待开发模块详细工业设计任务书（ChatGPT 接入开发直接使用）
+
+> 💡 **ChatGPT 开发指引说明**：  
+> 以下 8 个任务为从当前代码平滑演进到 Carl `llm-master` 工业标准的完整规划。每一个任务均包含**物理代码路径、数据契约、状态流转与核心方法签名**，可直接将对应任务段落作为 Prompt 交付给 ChatGPT 进行代码生成与集成。
+
+---
+
+##### 任务一：HITL (Human-in-the-Loop) 高危操作人机协同审批门禁
+
+* **核心目标**：当 DAG 执行流遇到高危动作（如折扣率低于底线 10%、商品单价特批、生成正式外贸商业发票 PI、批量邮件外发）时，拦截静默调用，将状态机置为 `WAITING_APPROVAL`，向前端推送交互卡片，等待人工“批准/修改/驳回”。
+* **代码物理路径**：
+  - 后端服务：`server/src/main/java/com/tradeagent/core/dag/HitlApprovalService.java`
+  - 判定拦截器：`server/src/main/java/com/tradeagent/core/dag/HitlRiskEvaluator.java`
+  - 前端组件：`client/src/views/chat-agent/components/HitlApprovalCard.vue`
+* **状态机流转设计**：
+  ```text
+  [DAG Running] 
+       │ 识别到高风险工具调用（如 generate_pi_invoice）
+       ▼
+  [WAITING_APPROVAL] ── 保存 Redis Checkpoint 快照 ──> 前端弹出交互卡片
+       │
+       ├─ 人工点击「核准通过」 ──> 状态置为 [APPROVED] ──> 从 Checkpoint 唤醒并恢复执行下游
+       ├─ 人工「修改参数提交」 ──> 状态置为 [APPROVED] ──> 用人工修正后的入参更新槽位池并继续执行
+       └─ 人工点击「驳回拒绝」 ──> 状态置为 [REJECTED] ──> 触发 Saga 逆向补偿回滚前序物理动作
+  ```
+* **REST 接口规范**：
+  - `POST /api/v1/agent/hitl/{approvalId}/decision`
+  - 请求 Payload：
+    ```json
+    {
+      "sessionId": "sess_1001",
+      "taskId": "task_2001",
+      "action": "APPROVE", // APPROVE | REJECT | OVERRIDE
+      "overrideParams": { "discountRate": 0.08 } // 当 action 为 OVERRIDE 时传递
+    }
+    ```
+* **验收标准**：
+  1. 触发高危工具时，后端不执行真实写逻辑，API 立即返回 `WAITING_APPROVAL`；
+  2. 前端对话流中渲染警告风格的审批卡片，展示拟执行的工具入参；
+  3. 人工核准后无缝恢复执行，不需要用户重新输入提示词。
+
+---
+
+##### 任务二：Execution Checkpoint (执行存档点) 与 断点续传机制
+
+* **核心目标**：彻底解决长周期 Agent 任务中途因等待审批、网络超时或后端服务重启导致的状态丢失问题。将执行图拓扑、变量槽位池与已完成步骤持久化到 Redis。
+* **代码物理路径**：
+  - 核心服务：`server/src/main/java/com/tradeagent/core/dag/ExecutionCheckpointService.java`
+  - 实体模型：`server/src/main/java/com/tradeagent/core/dag/model/AgentExecutionCheckpoint.java`
+* **Redis 存储结构**：
+  - Key：`agent:checkpoint:{sessionId}:{taskId}`（TTL 24小时）
+  - 核心存储字段：
+    ```json
+    {
+      "checkpointId": "cp_9901",
+      "sessionId": "sess_1001",
+      "taskId": "task_2001",
+      "originalQuery": "采购2000片单晶550W组件并报CIF鹿特丹",
+      "dagPlanJson": "{ ... 完整的任务DAG拓扑 ... }",
+      "completedStepIds": ["step_calc_price", "step_calc_freight"],
+      "slotVariablesPool": {
+        "model": "单晶550W",
+        "quantity": 2000,
+        "tierPrice": 0.125,
+        "currency": "USD",
+        "oceanFreight": 1850.0
+      },
+      "currentStepIndex": 2,
+      "status": "WAITING_APPROVAL",
+      "createdAt": 1729500000000
+    }
+    ```
+* **核心方法签名**：
+  ```java
+  public interface ExecutionCheckpointService {
+      AgentExecutionCheckpoint saveCheckpoint(String sessionId, String taskId, DagExecutionState state);
+      Optional<AgentExecutionCheckpoint> getCheckpoint(String sessionId, String taskId);
+      void resumeExecution(String checkpointId, Map<String, Object> injectedSlots);
+      void purgeCheckpoint(String sessionId, String taskId);
+  }
+  ```
+* **验收标准**：
+  1. 执行在 Step 2 挂起后，重启 Spring Boot 后端，通过 Checkpoint ID 依然能够精准还原槽位池并继续执行 Step 3；
+  2. 任务彻底成功（COMPLETED）或补偿完毕（ROLLED_BACK）后，自动清理对应 Redis Key。
+
+---
+
+##### 任务三：Saga 分布式柔性逆向补偿机制 (Compensating Transactions)
+
+* **核心目标**：为所有具备外部物理副作用的工具注册逆向补偿接口。在下游任务抛出致命异常或人工在 HITL 卡片点击“驳回”时，按先进后出（LIFO）顺序逆向回滚前序工具产生的外部影响。
+* **代码物理路径**：
+  - 工具契约升级：`server/src/main/java/com/tradeagent/modules/ai/tools/AgentTool.java`
+  - Saga 补偿调度器：`server/src/main/java/com/tradeagent/core/dag/SagaCompensationManager.java`
+  - 审计日志表：`saga_compensation_log` (MySQL)
+* **工具契约方法设计**：
+  ```java
+  public interface AgentTool {
+      String getToolName();
+      ToolResult execute(Map<String, Object> params);
+      
+      /**
+       * 逆向补偿动作（有副作用的工具必须重写）
+       * @param originalParams 正向执行时的原始入参
+       * @param forwardResult 正向执行时的返回值（含生成的单据ID、锁定的资源ID）
+       */
+      default ToolResult compensate(Map<String, Object> originalParams, ToolResult forwardResult) {
+          // 纯只读工具（如查汇率、查知识库）默认空实现，无须补偿
+          return ToolResult.success("READ_ONLY_TOOL_NO_COMPENSATION_NEEDED");
+      }
+  }
+  ```
+* **补偿栈执行逻辑**：
+  ```java
+  // 逆向出栈回滚
+  Deque<ExecutedStepSnapshot> compensationStack = executionContext.getExecutedSteps();
+  while (!compensationStack.isEmpty()) {
+      ExecutedStepSnapshot step = compensationStack.pop();
+      AgentTool tool = toolRegistry.get(step.getToolName());
+      tool.compensate(step.getInputParams(), step.getOutputResult());
+      recordCompensationAudit(step);
+  }
+  ```
+* **验收标准**：
+  1. 模拟“Step 1 锁库存 2000 片 -> Step 2 生成外贸海运草单 -> Step 3 订舱网络超时失败”；
+  2. 系统自动依次调用 `cancel_freight_draft` 和 `release_inventory_lock`，状态机最终收敛为 `ROLLED_BACK`；
+  3. 前端时间轴清晰展示各节点的逆向补偿标记（橙色警告图标）。
+
+---
+
+##### 任务四：Reflection 自愈重试循环 (Self-Correction & Error Recovery)
+
+* **核心目标**：消除“工具一报错整个 Agent 当场崩盘抛 500”的脆弱现象。将可自愈的入参错误回传给大模型，由 LLM 进行 1~2 轮自我纠偏。
+* **代码物理路径**：
+  - 错误分级定义：`server/src/main/java/com/tradeagent/core/dag/exception/ToolExecutionException.java`
+  - 自愈处理器：`server/src/main/java/com/tradeagent/core/dag/ReflectionCorrectionHandler.java`
+* **错误分类分流策略**：
+  - **FATAL（致命错误）**：数据库宕机、第三方鉴权失败、网络完全断开 $\rightarrow$ 立即中止执行，触发 Saga 补偿或人工介入。
+  - **RECOVERABLE（可自愈参数错误）**：缺少非必须参数、港口代码格式不对、单位冲突（把“瓦”写成了“片”） $\rightarrow$ 捕获并构建 Reflection Prompt。
+* **Reflection Prompt 结构模板**：
+  ```text
+  你上一步为工具 [freight_cif_estimator] 提供的入参存在如下校验错误：
+  【错误原因】: 目的港 "Rotterdam" 需要对应的 ISO 标准三字代码 (NLRTM)，且柜型仅支持 20GP/40GP/40HQ。
+  【用户原始证据】: "发往荷兰鹿特丹，走40高柜"
+  请反思并重新生成修正后的参数 JSON。
+  ```
+* **验收标准**：
+  1. 设定 `MAX_REFLECTION_ATTEMPTS = 2`；
+  2. 模拟传入别名非标准入参，系统在后台自动自愈修正参数并重试成功；
+  3. 若重试 2 次仍然失败，优雅熔断并提示用户人工确认。
+
+---
+
+##### 任务五：防翻车工程护栏 (Guardrails: Max Steps & Context Partitioning)
+
+* **核心目标**：防范 Carl 仓库重点指出的“静默死循环”与“长链路目标漂移（Goal Drift）”。
+* **代码物理路径**：
+  - 护栏切面：`server/src/main/java/com/tradeagent/core/dag/guardrails/AgentGuardrailEngine.java`
+  - 上下文隔离器：`server/src/main/java/com/tradeagent/modules/ai/chat/PartitionedContextBuilder.java`
+* **三层上下文隔离（Context Partitioning）**：
+  - `ZONE 1: SYSTEM_PROMPT`：严格不可篡改的角色设定与业务红线；
+  - `ZONE 2: USER_IMMUTABLE_GOAL`：用户最初发起的原始诉求（全流程置顶加权，永远不会被多轮工具调用挤出视野）；
+  - `ZONE 3: SCRATCHPAD_WORKING`：当前正在推进的单步工具入参和轻量 Observation，单步完成后只保留摘要变量，丢弃冗余大文本。
+* **执行硬边界**：
+  - 单个会话单轮任务限制最大 DAG 步骤数 `MAX_TOTAL_STEPS = 6`；
+  - 单步骤超时时间 `STEP_TIMEOUT_SECONDS = 30`；
+  - 连续相同入参调用检测（防死循环哈希指纹对比）。
+
+---
+
+##### 任务六：三层复合记忆体系 (Entity Memory + Episodic Memory)
+
+* **核心目标**：让智能体具备跨会话的客户画像记忆（Entity）以及相似成交方案的少样本召回能力（Episodic）。
+* **代码物理路径**：
+  - 实体画像服务：`server/src/main/java/com/tradeagent/modules/ai/memory/EntityMemoryService.java`
+  - 情景向量记忆：`server/src/main/java/com/tradeagent/modules/ai/memory/EpisodicMemoryService.java`
+  - 客户画像表：`crm_buyer_profile` (MySQL)
+* **业务规范**：
+  1. **只填空不覆盖原则**：对话中提取到买家港口为“汉堡”时，仅当字段为 NULL 时填充，人工确认过的值打上加锁标记；
+  2. **Episodic 向量沉淀**：当外贸报价单成交或获得业务员好评（👍）时，将“客户提问 + 完整报价解决方案 + 调用的工具链”转换为切片存入 `episodic_vector_store`，在新客户输入类似询盘时动态作为 Few-Shot 召回示范。
+
+---
+
+##### 任务七：Cross-Encoder 语义二次重排器 (Advanced RAG Reranker)
+
+* **核心目标**：在 pgvector 稠密向量与 BM25 稀疏检索初筛出候选切片后，引入成对 Cross-Encoder 计算全局深层交互，消除长文本“迷失在中间（Lost in the Middle）”。
+* **代码物理路径**：
+  - 重排器接口：`server/src/main/java/com/tradeagent/modules/ai/rag/rerank/CrossEncoderReranker.java`
+  - 本地/在线驱动：支持接入本地 BGE-Reranker-Large 或 DashScope Rerank API。
+* **执行管道**：
+  ```text
+  User Query 
+       │
+       ├─ pgvector 稠密检索 ──> 召回 Top-12
+       └─ BM25 稀疏内存倒排 ──> 召回 Top-12
+                   │
+                   ▼ 合并去重为 15~18 个候选切片池
+                   │
+                   ▼ Cross-Encoder 联合编码打分 (Query, DocumentChunk)
+                   │
+                   ▼ 截取 Top-4 高置信度切片 ──> 注入 Prompt / 触发 0.40 安全门禁
+  ```
+
+---
+
+##### 任务八：Agent 轨迹全息自动化评测 (Trajectory Evaluation)
+
+* **核心目标**：参考 Carl 仓库中的《Agent 评估体系》，不局限于回答的文本质量，而是量化评估规划和执行的工程质量。
+* **代码物理路径**：
+  - 评测引擎：`server/src/main/java/com/tradeagent/modules/ai/intent/benchmark/AgentTrajectoryBenchmarkService.java`
+* **四大核心量化指标**：
+  1. **规划步数最优比（Step Efficiency Ratio）**：$S_{\\text{ratio}} = \\frac{\\text{理论最简步数}}{\\text{实际执行步数}}$；
+  2. **工具选择精准度（Tool Precision）**：选取的工具是否完全命中黄金工具集，有无冗余剪枝失效；
+  3. **参数自愈成功率（Self-Correction Rate）**：遇到可恢复入参错误时，在 2 轮内自我修正的概率；
+  4. **平均 Token 损耗与单轮延迟耗时（Token Budget & Latency）**。
+
+---
+
 ## 🛠️ 技术栈清单
 
 | 领域 | 核心技术选型 | 说明 |
@@ -180,29 +438,148 @@ personal-xiangmu/
 
 ---
 
-## 🚀 快速开始与本地启动
+## 🚀 快速开始与本地启动全流程指南
 
-### 1. 环境准备
-* **JDK**：Java 17+ (推荐 Eclipse Adoptium OpenJDK 17)
-* **Maven**：3.8+
-* **数据库/中间件**：MySQL 8.0+、Redis 7.0+（已内置本地降级与断点容错）
+为了确保任何开发者或 AI 协同开发模型（如 ChatGPT / Claude / Gemini）能够一次性顺利启动并调试本系统，请严格按照以下步骤准备运行环境。
 
-### 2. 克隆仓库与配置
-```bash
-git clone https://github.com/Crystal666988/personal-xiangmu.git
-cd personal-xiangmu
+---
 
-# 复制环境变量模板 (无任何敏感密钥，填入本地环境配置)
-cp .env.example .env
-```
+### 1. 基础依赖清单
 
-### 3. 后端服务编译与启动
-```bash
-cd server
-mvn clean package -DskipTests
-java -jar target/tradeagent-server-1.0.0.jar
-```
-服务默认监听端口：`http://localhost:48050`。
+| 依赖软件 | 最低版本要求 | 推荐配置 | 作用说明 |
+| :--- | :--- | :--- | :--- |
+| **JDK** | Java 17+ | Eclipse Adoptium OpenJDK 17 | 核心运行环境，必须启用 UTF-8 编码 |
+| **Maven** | 3.8+ | Apache Maven 3.9+ | 依赖管理与打包工具 |
+| **Node.js** | 18+ | Node.js 20 LTS (npm 10+) | 前端 Vue 3 + Vite 构建运行时 |
+| **MySQL** | 8.0+ | MySQL 8.0.30+ (端口 3306) | 业务数据、对话历史、会话画像与 Saga 审计日志 |
+| **Redis** | 3.2+ 或 7.0+ | Redis 3.2.100 (Windows) / Redis 7.x | 分布式排重锁、执行存档点 Checkpoints 与会话摘要缓存 |
+| **pgvector** | PostgreSQL 16 (可选) | 端口 5433 (Docker 容器) | 1024 维稠密向量库（若未启动自动平滑降级为 BM25 纯内存检索） |
+
+---
+
+### 2. 数据库准备与初始化 (MySQL)
+
+1. **创建数据库**：
+   ```sql
+   CREATE DATABASE IF NOT EXISTS trade_agent_db DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   ```
+2. **连接凭据配置**：
+   默认配置在 `server/src/main/resources/application.yaml` 中：
+   - 数据库地址：`127.0.0.1:3306`
+   - 数据库名称：`trade_agent_db`
+   - 用户名：`root`
+   - 密码：`123456`（如不同，可通过系统环境变量 `MYSQL_PASSWORD` 动态覆盖）
+3. **初始化表结构与迁移脚本**：
+   - 项目内置表结构实体由 MyBatis-Plus 管理，首次使用请确保执行新增的 Saga 审计表脚本：
+   - 脚本路径：`server/src/main/resources/db/migration/V20261022_01__saga_compensation_log.sql`
+   ```sql
+   CREATE TABLE IF NOT EXISTS saga_compensation_log (
+       id CHAR(64) NOT NULL PRIMARY KEY,
+       tenant_id VARCHAR(160) NOT NULL,
+       session_id VARCHAR(160) NOT NULL,
+       task_id VARCHAR(160) NOT NULL,
+       checkpoint_id VARCHAR(80) NOT NULL,
+       step_id VARCHAR(80) NOT NULL,
+       tool_id VARCHAR(160) NOT NULL,
+       idempotency_key VARCHAR(100) NOT NULL,
+       event_type VARCHAR(32) NOT NULL,
+       attempt INT NOT NULL,
+       latency_ms BIGINT NOT NULL DEFAULT 0,
+       error_code VARCHAR(80) NULL,
+       original_params LONGTEXT NOT NULL,
+       forward_result LONGTEXT NOT NULL,
+       compensation_result LONGTEXT NOT NULL,
+       created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+       KEY idx_saga_execution (tenant_id, checkpoint_id),
+       KEY idx_saga_created (created_at)
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+   ```
+
+---
+
+### 3. 分布式缓存启动 (Redis)
+
+系统强依赖 Redis 维护会话排重锁与 DAG Execution Checkpoint 存档点。
+* **Windows 本地启动命令**（以本地 Redis-x64-3.2.100 为例）：
+  ```powershell
+  & "C:\\Users\\xiezi\\Desktop\\Redis-x64-3.2.100\\redis-server.exe" "C:\\Users\\xiezi\\Desktop\\Redis-x64-3.2.100\\redis.windows.conf"
+  ```
+* **服务验证**：
+  默认监听 `127.0.0.1:6379`，无需密码。可通过 `redis-cli ping` 验证返回 `PONG`。
+  *(注：系统底层 Lua 脚本已使用 `HMSET` 全量重构，100% 兼容 Windows Redis 3.2 及 Linux Redis 7+)*。
+
+---
+
+### 4. 大模型环境变量配置 (DashScope API Key)
+
+系统内置阿里百炼 DashScope 文本向量化（`text-embedding-v3`，1024 维）与大模型推理驱动。
+* **开发环境配置**：
+  在启动后端前，必须注入环境变量或 JVM 参数：
+  ```powershell
+  $env:DASHSCOPE_API_KEY="sk-your-dashscope-api-key"
+  ```
+  或者在 `java -jar` 命令中加参数：`-DDASHSCOPE_API_KEY=sk-your-dashscope-api-key`。
+
+---
+
+### 5. 后端编译打包与启动 (Spring Boot)
+
+1. **进入后端目录**：
+   ```powershell
+   cd "C:\\Users\\xiezi\\Desktop\\新项目\\personal-xiangmu\\server"
+   ```
+2. **运行全量测试套件（含 162 个单元与集成测试）**：
+   ```powershell
+   mvn test
+   ```
+3. **打包生产 JAR（跳过测试）**：
+   *(注意：打包前请确保先停止正在运行的旧 Java 进程，避免 JAR 锁冲突)*
+   ```powershell
+   mvn clean package -DskipTests
+   ```
+4. **启动核心引擎**：
+   *(Windows 下必须显式指定 `-Dfile.encoding=UTF-8`，彻底杜绝中文乱码)*
+   ```powershell
+   java "-Dfile.encoding=UTF-8" "-DDASHSCOPE_API_KEY=sk-your-dashscope-api-key" -jar "target\\tradeagent-server-1.0.0.jar"
+   ```
+5. **服务就绪标志**：
+   看到日志输出 `Tomcat started on port 48050 (http) with context path '/'` 即代表后端完全启动成功。
+   - 接口文档地址：`http://localhost:48050/doc.html`
+
+---
+
+### 6. 前端依赖安装与启动 (Vue 3 + Vite)
+
+1. **进入前端目录**：
+   ```powershell
+   cd "C:\\Users\\xiezi\\Desktop\\新项目\\personal-xiangmu\\client"
+   ```
+2. **安装依赖（首次启动）**：
+   ```powershell
+   npm install
+   ```
+3. **启动 Vite 开发调试服务器**：
+   ```powershell
+   npm run dev
+   ```
+4. **访问页面**：
+   打开浏览器访问：`http://localhost:5173`
+   - **智能体工作台**：`http://localhost:5173/#/chat-agent`（实时 ReAct 时间轴、HITL 审批卡片交互）
+   - **RAG 评测工作台**：`http://localhost:5173/#/workbench`（知识库切片检索与 20 题基准评测）
+
+---
+
+### 7. 服务端口与健康检查速查
+
+| 服务名 | 默认端口 | 状态验证方式 | 说明 |
+| :--- | :--- | :--- | :--- |
+| **Spring Boot 后端** | `48050` | `GET http://localhost:48050/api/v1/kb/documents` | 核心 Agent DAG 调度引擎 |
+| **Vite 前端界面** | `5173` | 浏览器打开 `http://localhost:5173` | Vue 3 自然交互工作台 |
+| **Redis 缓存服务** | `6379` | `redis-cli ping` 返回 `PONG` | 分布式排重锁与 Checkpoint 存档 |
+| **MySQL 数据库** | `3306` | `mysql -uroot -p123456 trade_agent_db` | 业务持久化存储 |
+| **pgvector 向量库** | `5433` | Docker 运行（若不可用自动降级为 BM25） | 1024 维 HNSW 索引 |
+
+---
 
 ---
 

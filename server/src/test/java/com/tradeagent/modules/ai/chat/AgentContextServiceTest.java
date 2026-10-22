@@ -9,6 +9,7 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AgentContextServiceTest {
+    private String modelOutput;
     private AgentSession storedSession;
     private final AgentSessionMapper sessions = (AgentSessionMapper) java.lang.reflect.Proxy.newProxyInstance(
             AgentSessionMapper.class.getClassLoader(), new Class<?>[]{AgentSessionMapper.class},
@@ -42,19 +43,59 @@ class AgentContextServiceTest {
                     new com.tradeagent.modules.ai.tools.FreightCifEstimatorTool(),
                     new com.tradeagent.modules.ai.tools.CurrencyExchangeRateTool()
             ));
-    private final com.tradeagent.modules.ai.tools.ToolDispatchService dispatchService =
-            new com.tradeagent.modules.ai.tools.ToolDispatchService(toolRegistry, router);
-    private final com.tradeagent.core.dag.ReActExecutor reactExecutor =
-            new com.tradeagent.core.dag.ReActExecutor(toolRegistry, router);
+    private final com.tradeagent.modules.ai.intent.RoutingWorkflowStore workflowStore = new com.tradeagent.modules.ai.intent.RoutingWorkflowStore() {
+        State state;
+        final Map<String, com.tradeagent.modules.ai.intent.RoutingWorkflowService.Result> receipts = new HashMap<>();
+        public String acquire(String t, String s) { return "token"; }
+        public void release(String t, String s, String token) {}
+        public State read(String t, String s) { return state; }
+        public com.tradeagent.modules.ai.intent.RoutingWorkflowService.Result receipt(String t, String s, String id) { return receipts.get(id); }
+        public boolean save(String t, String s, String token, State replacement) { state = replacement; return true; }
+        public boolean complete(String t, String s, String token, String id, com.tradeagent.modules.ai.intent.RoutingWorkflowService.Result result, State replacement) {
+            state = replacement; receipts.put(id, result); return true;
+        }
+    };
+    private final com.tradeagent.modules.ai.intent.RoutingWorkflowService workflow = new com.tradeagent.modules.ai.intent.RoutingWorkflowService(
+            new com.tradeagent.modules.ai.intent.RoutingPreviewService(new com.tradeagent.modules.ai.intent.RoutingPlanGenerator() {
+                public boolean isAvailable(com.tradeagent.modules.ai.intent.RoutingModelConfig config) { return modelOutput != null; }
+                public String generate(String instructions, String source, com.tradeagent.modules.ai.intent.RoutingModelConfig config) { return modelOutput; }
+            }, new com.tradeagent.modules.ai.intent.EvidenceToolCatalog(toolRegistry),
+                    new com.tradeagent.modules.ai.intent.StrictEvidencePlanReader(), new ObjectMapper()),
+            new com.tradeagent.modules.ai.intent.ValidatedPlanExecutor(toolRegistry), workflowStore);
     private final AgentContextService service = new AgentContextService(sessions, history,
-            new ConversationContextManager(), router, new ObjectMapper(), summaries, dispatchService, reactExecutor);
-
+            new ConversationContextManager(), new ObjectMapper(), summaries, workflow, toolRegistry);
     private void session() {
         storedSession = AgentSession.builder().id("s1").tenantId("t1").build();
     }
 
     private AgentMessage message(String id, String role, String content) {
         return AgentMessage.builder().id(id).sessionId("s1").role(role).content(content).build();
+    }
+
+    @Test void actualContextEntryPausesThenExecutesOnlyThePlannedTool() {
+        storedSession = AgentSession.builder().id("s1").tenantId("7").build();
+        var config = new com.tradeagent.modules.ai.intent.RoutingModelConfig("offline-key", "https://unused.test", "model", 7L, "openai");
+        var first = message("u1", "user", "TOPCon580W报价");
+        history.messages = List.of(first);
+        modelOutput = """
+                {"tasks":[{"tool":"calculate_tier_price","slots":{"productModel":"m"}}],
+                 "slotCandidates":[{"id":"m","type":"MODEL","evidence":"TOPCon580W","sourceMessageId":"u1"}]}
+                """;
+        var waiting = service.prepare("7", "s1", "u1", config, null);
+        assertEquals("NEEDS_CLARIFICATION", waiting.routingStatus());
+        assertFalse(waiting.shouldGenerate()); assertTrue(waiting.pending()); assertEquals(0, waiting.telemetry().getToolsCalledCount());
+        var supplement = message("u2", "user", "采购2000片"); history.messages = List.of(first, supplement);
+        modelOutput = """
+                {"tasks":[{"tool":"calculate_tier_price","slots":{"productModel":"m","quantity":"q"}}],
+                 "slotCandidates":[{"id":"m","type":"MODEL","evidence":"TOPCon580W","sourceMessageId":"u1"},
+                                   {"id":"q","type":"QUANTITY","evidence":"2000片","sourceMessageId":"u2"}]}
+                """;
+        var done = service.prepare("7", "s1", "u2", config, "continue");
+        assertEquals("EXECUTED", done.routingStatus()); assertTrue(done.shouldGenerate()); assertFalse(done.pending());
+        assertEquals(1, done.routing().activeTools().size());
+        assertEquals("calculate_tier_price", done.telemetry().getTraces().get(0).getToolId());
+        assertEquals(1, done.telemetry().getToolsCalledCount()); assertEquals(2, done.sourceMessages().size());
+        assertTrue(done.messages().stream().anyMatch(m -> m.content().contains("DEMO/isLive=false")));
     }
 
     @Test
@@ -75,7 +116,10 @@ class AgentContextServiceTest {
                 message("answer", "assistant", "旧回答"), current,
                 message("later", "assistant", "并发后续消息"));
         var result = service.prepare("t1", "s1", "current");
-        assertEquals("COMPOSITE", result.routing().domain());
+        assertEquals("GENERAL", result.routing().domain());
+        assertEquals("MODEL_UNAVAILABLE", result.routingStatus());
+        assertFalse(result.shouldGenerate());
+        assertEquals(0, result.telemetry().getToolsCalledCount());
         assertEquals(2, result.historyMessageCount());
         assertEquals(1, result.messages().stream().filter(m -> m.content().equals("分析并报价")).count());
         assertTrue(result.messages().stream().anyMatch(m -> m.content().contains("历史附件内容")));
@@ -96,8 +140,8 @@ class AgentContextServiceTest {
         history.messages = messages;
         var result = service.prepare("t1", "s1", "current");
         assertEquals(20, result.historyMessageCount());
-        assertTrue(result.messages().get(1).content().contains("已确认事实与待办"));
-        assertEquals("问题5", result.messages().get(2).content());
+        assertTrue(result.messages().get(2).content().contains("已确认事实与待办"));
+        assertEquals("问题5", result.messages().get(3).content());
         assertEquals("updated", result.summaryStatus());
         assertEquals(10, result.summaryMessageCount());
         assertEquals(0, result.unsummarizedMessageCount());

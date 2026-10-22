@@ -87,7 +87,13 @@ public class ReActStep implements Serializable {
         THOUGHT,
         ACTION,
         OBSERVATION,
+        COMPENSATION,
+        REFLECTION,
         FINAL_ANSWER
+    }
+    public static ReActStep lifecycle(int index, StepType type, String tool, String status, Object output, long costMs) {
+        return ReActStep.builder().stepIndex(index).type(type).toolId(tool).toolName(tool).status(status)
+                .toolOutput(output).timestamp(System.currentTimeMillis()).durationMs(costMs).build();
     }
 
     public static ReActStep thought(int stepIndex, String thoughtText, long durationMs) {

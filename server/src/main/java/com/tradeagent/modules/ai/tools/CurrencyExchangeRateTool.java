@@ -33,36 +33,21 @@ public class CurrencyExchangeRateTool implements IToolHandler {
         example.put("baseCurrency", "USD");
         example.put("targetCurrency", "CNY");
 
-        return ToolDefinition.builder()
+        return ToolDefinition.builder().readOnly(true)
                 .id("currency_exchange_rate")
                 .name("外汇即期牌价与汇率查询")
                 .domain("COMMERCE")
-                .description("查询中国外汇交易中心 (CFETS) 与国际银行间即期基准中间价、现汇买入与卖出牌价")
+                .description("DEMO static currency rates; not live CFETS/BOC data.")
                 .parameterSchema(schema)
                 .exampleQuery(example)
                 .build();
     }
 
     @Override
-    public Object execute(Map<String, Object> params) {
-        String base = params != null && params.get("baseCurrency") != null ? params.get("baseCurrency").toString().toUpperCase() : "USD";
-        String target = params != null && params.get("targetCurrency") != null ? params.get("targetCurrency").toString().toUpperCase() : "CNY";
-
-        String pair = base + "/" + target;
-        double rate = RATES.getOrDefault(pair, 7.2385);
-
-        double buyRate = Math.round(rate * 0.998 * 10000.0) / 10000.0;
-        double sellRate = Math.round(rate * 1.002 * 10000.0) / 10000.0;
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("currencyPair", pair);
-        result.put("middleRate", rate);
-        result.put("cashBuyRate", buyRate);
-        result.put("cashSellRate", sellRate);
-        result.put("source", "中国外汇交易中心 (CFETS) / BOC 即期牌价");
-        result.put("updateTime", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        result.put("status", "VALID");
-
-        return result;
+    public Object execute(Map<String, Object> input) {
+        var p = TradeToolRules.prepare("currency_exchange_rate", input).parameters();
+        String pair = p.get("baseCurrency") + "/" + p.get("targetCurrency");
+        return Map.of("currencyPair", pair, "middleRate", TradeToolRules.FX_RATES.get(pair),
+                "source", "DEMO_STATIC_RATE_TABLE", "isLive", false);
     }
 }

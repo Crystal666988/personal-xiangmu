@@ -23,34 +23,25 @@ public class CustomsDataLookupTool implements IToolHandler {
         example.put("companyName", "Al-Futtaim Solar Energy Solutions LLC");
         example.put("hsCode", "8541.4300");
 
-        return ToolDefinition.builder()
+        return ToolDefinition.builder().readOnly(true)
                 .id("customs_data_lookup")
                 .name("全球海关提单与买家画像检索")
                 .domain("PROSPECT")
-                .description("穿透全球海关历史进出口提单 (B/L) 数据库，检索采购商核心采购品类、提单频次、起运港分布与合作历史")
+                .description("DEMO company fixtures only; no verified customs shipment records.")
                 .parameterSchema(schema)
                 .exampleQuery(example)
                 .build();
     }
 
     @Override
-    public Object execute(Map<String, Object> params) {
-        String company = params != null && params.get("companyName") != null ? params.get("companyName").toString() : "Al-Futtaim Solar Energy Solutions LLC";
-        String hs = params != null && params.get("hsCode") != null ? params.get("hsCode").toString() : "8541.4300";
-
+    public Object execute(Map<String, Object> input) {
+        var p = TradeToolRules.prepare("customs_data_lookup", input).parameters();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("targetCompany", company);
-        result.put("country", "United Arab Emirates (阿联酋)");
-        result.put("creditRating", "A级 (优质常年采购商)");
-        result.put("totalShipmentsPast12M", 34);
-        result.put("primaryHsCode", hs);
-        result.put("mainExportOrigins", List.of("宁波港 (Ningbo 52%)", "上海港 (Shanghai 30%)", "深圳盐田 (Yantian 18%)"));
-        result.put("recentShipments", List.of(
-                Map.of("blNumber", "MEDU" + (System.currentTimeMillis() % 10000000), "shipDate", "2026-09-28", "teu", "6 x 40HQ", "goodsDesc", "580W TOPCon Bifacial Solar Modules"),
-                Map.of("blNumber", "COSX" + ((System.currentTimeMillis() + 11) % 10000000), "shipDate", "2026-08-15", "teu", "4 x 40HQ", "goodsDesc", "String Inverters & PV Brackets")
-        ));
-        result.put("procurementCycle", "每年 Q1 与 Q3 为备货旺季，当前处于中东高温前建仓窗口期");
-
+        result.put("targetCompany", p.get("companyName"));
+        if (p.containsKey("hsCode")) result.put("hsCodeFilter", p.get("hsCode"));
+        result.put("dataSource", "DEMO_CUSTOMS_FIXTURES"); result.put("isLive", false);
+        result.put("verifiedRecords", List.of());
+        result.put("notice", "Demo company fixture only; no live or verified customs shipments are available.");
         return result;
     }
 }

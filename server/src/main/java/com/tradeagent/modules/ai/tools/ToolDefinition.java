@@ -18,6 +18,9 @@ public class ToolDefinition {
     /** 工具唯一英文标识 */
     private String id;
 
+    /** Explicit server classification. Unclassified/new tools require approval by default. */
+    private boolean readOnly;
+
     /** 工具中文名 */
     private String name;
 

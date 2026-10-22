@@ -41,6 +41,9 @@ public class ToolExecutionTrace {
 
     /** 异常信息 (若失败) */
     private String error;
+    private String errorCode;
+    private String errorCategory;
+    private String effectOutcome;
 
     /** 执行时间点 */
     private String executedAt;

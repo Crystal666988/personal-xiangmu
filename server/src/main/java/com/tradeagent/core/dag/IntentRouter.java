@@ -9,7 +9,7 @@ import java.util.regex.Pattern;
 public class IntentRouter {
     private static final Map<ToolDomain, Pattern> RULES = Map.of(
             ToolDomain.COMMERCE, Pattern.compile("(?i)(\\b(price|quotation|quote|cif|fob|pi|freight|cost|currency|usd|eur|cny)\\b|报价|价格|运费|单价|货柜|账期|多少钱|美元|欧元|人民币|汇率|折算|结汇|阶梯|单瓦|40HQ|20GP|高柜|普柜|货值|到岸价|离岸价)"),
-            ToolDomain.KNOWLEDGE, Pattern.compile("(?i)(\\b(specification|datasheet|cert|ce|ul|tuv|rohs|warranty|catalog|iec|saso|ucp600)\\b|参数|规格|认证|证书|质保|手册|说明书|标准|规范|衰减|间距|拉拔力|零关税|原产地证|FORM E|UN38\\.3|Saber|AFCI|\\.(pdf|txt|md|docx?|csv|json)$)"),
+            ToolDomain.KNOWLEDGE, Pattern.compile("(?i)(\\b(specification|datasheet|cert|ce|ul|tuv|rohs|warranty|catalog|iec|saso|ucp600)\\b|参数|规格|认证|证书|质保|手册|说明书|标准|规范|衰减|间距|拉拔力|零关税|原产地证|FORM E|UN38\\.3|Saber|AFCI|架构|\\.(pdf|txt|md|docx?|csv|json)$)"),
             ToolDomain.PROSPECT, Pattern.compile("(?i)(\\b(company|website|address|customs|background|maps|hs|buyer|importer)\\b|官网|背景|海关|税号|背调|地址|提单|采购商|买家|进口商|HS编码|清关记录|装船港|目的港)"),
             ToolDomain.CRM, Pattern.compile("(?i)(\\b(profile|follow up|schedule|stage|crm|lead|opportunity)\\b|档案|跟进|意向|预约|联系人|建档|客户|商机|邮件|回访|催款|风控|额度|客诉|公海|签约|回款|授信)"),
             ToolDomain.VISION, Pattern.compile("(?i)(图片|截图|拍照|单据|识别|看图|ocr|图纸|扫描件|讲了啥|讲了什么|\\.(png|jpe?g|webp)$)"));

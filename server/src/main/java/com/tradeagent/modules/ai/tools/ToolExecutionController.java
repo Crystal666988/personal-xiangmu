@@ -70,13 +70,7 @@ public class ToolExecutionController {
      */
     @PostMapping("/auto-dispatch")
     public ApiResponse<TurnTelemetry> autoDispatch(@RequestBody AutoDispatchRequest request) {
-        String query = request != null ? request.getQuery() : "";
-        String attachment = request != null ? request.getAttachmentName() : null;
-
-        IntentRouter.Routing routing = router.route(query, attachment);
-        TurnTelemetry telemetry = dispatchService.autoDispatch(query, routing);
-
-        return ApiResponse.success(telemetry);
+        return ApiResponse.error(410, "Legacy automatic dispatch is disabled; use the session context workflow");
     }
 
     /**

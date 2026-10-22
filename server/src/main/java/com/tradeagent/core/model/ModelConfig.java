@@ -4,15 +4,21 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 import java.io.Serializable;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /**
  * 租户/系统多模型动态配置实体
  * 包含平台类型、BaseURL、脱敏密钥、模型名称及采样参数
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class ModelConfig implements Serializable {
@@ -42,6 +48,7 @@ public class ModelConfig implements Serializable {
     /**
      * API Key (支持 AES 密文存储，内存解密)
      */
+    @ToString.Exclude
     private String apiKey;
 
     /**
@@ -65,6 +72,21 @@ public class ModelConfig implements Serializable {
      * 生成缓存 Key
      */
     public String getCacheKey() {
-        return String.format("%s:%s:%s:%s", tenantId, usageType, provider, modelName);
+        if (tenantId == null || tenantId <= 0 || usageType == null
+                || !usageType.matches("[A-Za-z0-9_.-]+")) {
+            throw new IllegalArgumentException("A positive tenant id and explicit usage are required");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            for (String value : new String[]{tenantId.toString(), usageType, provider, baseUrl,
+                    apiKey, modelName, String.valueOf(temperature), String.valueOf(maxTokens)}) {
+                byte[] bytes = value == null ? new byte[0] : value.getBytes(StandardCharsets.UTF_8);
+                digest.update(ByteBuffer.allocate(4).putInt(value == null ? -1 : bytes.length).array());
+                digest.update(bytes);
+            }
+            return tenantId + ":" + usageType + ":" + HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable");
+        }
     }
 }

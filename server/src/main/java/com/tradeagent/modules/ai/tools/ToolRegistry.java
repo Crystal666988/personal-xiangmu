@@ -7,6 +7,9 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import com.tradeagent.core.dag.HitlRiskEvaluator;
+import com.tradeagent.core.dag.exception.ToolExecutionException;
+import com.tradeagent.core.dag.model.ToolCorrectionCandidate;
 
 /**
  * 智能体工具注册与物理执行中心
@@ -44,6 +47,21 @@ public class ToolRegistry {
         IToolHandler handler = toolMap.get(toolId);
         return handler != null ? handler.getDefinition() : null;
     }
+    public boolean supportsCompensation(String id) {
+        var handler = toolMap.get(id); return handler != null && handler.supportsCompensation();
+    }
+    public boolean compensationRetrySafe(String id) {
+        var handler = toolMap.get(id); return handler != null && handler.compensationRetrySafe();
+    }
+    public Object compensate(String id, Map<String, Object> params, Object result, String idempotencyKey) throws Exception {
+        var handler = toolMap.get(id);
+        if (handler == null || !handler.supportsCompensation()) throw new UnsupportedOperationException("COMPENSATION_UNSUPPORTED");
+        return handler.compensate(Map.copyOf(params), result, idempotencyKey);
+    }
+    public List<ToolCorrectionCandidate> correctionCandidates(String id, Map<String, Object> params, Map<String, String> sources) {
+        var handler = toolMap.get(id);
+        return handler == null ? List.of() : List.copyOf(handler.correctionCandidates(Map.copyOf(params), Map.copyOf(sources)));
+    }
 
     /**
      * 物理执行指定工具并生成遥测追踪记录 (Telemetry Trace)
@@ -63,11 +81,16 @@ public class ToolRegistry {
                     .latencyMs(0)
                     .status("FAILED")
                     .error("未找到工具 ID: " + toolId)
+                    .errorCode("TOOL_NOT_REGISTERED").errorCategory("FATAL").effectOutcome("NOT_APPLIED")
                     .executedAt(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")))
                     .build();
         }
 
         ToolDefinition def = handler.getDefinition();
+        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
+        if (HitlRiskEvaluator.risk(def, safeParams).isPresent() && !HitlRiskEvaluator.authorized(toolId, safeParams)) {
+            throw new IllegalArgumentException("该调用需要人工审批，请通过会话 DAG 审批流程执行");
+        }
         long startNano = System.nanoTime();
         try {
             Object result = handler.execute(params != null ? params : Collections.emptyMap());
@@ -97,7 +120,11 @@ public class ToolRegistry {
                     .outputResult(null)
                     .latencyMs(costMs)
                     .status("FAILED")
-                    .error(e.getMessage())
+                    .error(e instanceof ToolExecutionException typed ? typed.getMessage() : "工具调用失败，请核查服务日志")
+                    .errorCode(e instanceof ToolExecutionException typed ? typed.getCode() : "TOOL_EXECUTION_FAILED")
+                    .errorCategory(e instanceof ToolExecutionException typed ? typed.getCategory().name() : "FATAL")
+                    .effectOutcome(e instanceof ToolExecutionException typed ? typed.getEffectOutcome().name()
+                            : HitlRiskEvaluator.hasSideEffects(def) ? "UNKNOWN" : "NOT_APPLIED")
                     .executedAt(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")))
                     .build();
         }

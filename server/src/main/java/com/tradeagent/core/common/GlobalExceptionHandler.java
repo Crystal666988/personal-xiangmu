@@ -11,6 +11,17 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(org.springframework.web.server.ResponseStatusException.class)
+    public org.springframework.http.ResponseEntity<ApiResponse<Void>> handleResponseStatus(org.springframework.web.server.ResponseStatusException e) {
+        return org.springframework.http.ResponseEntity.status(e.getStatusCode())
+                .body(ApiResponse.error(e.getStatusCode().value(), e.getReason()));
+    }
+
+    @ExceptionHandler({org.springframework.web.bind.MethodArgumentNotValidException.class,
+            org.springframework.http.converter.HttpMessageNotReadableException.class})
+    public org.springframework.http.ResponseEntity<ApiResponse<Void>> handleInvalidRequest(Exception e) {
+        return org.springframework.http.ResponseEntity.badRequest().body(ApiResponse.error(400, "请求参数不合法，请检查字段与枚举值"));
+    }
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ApiResponse<Void> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
