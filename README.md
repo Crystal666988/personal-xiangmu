@@ -168,20 +168,20 @@
 
 #### 1. 架构对照全景总览（已完成能力 vs 待开发全量缺口）
 
-| 知识模块 (llm-master 标准) | 工业核心痛点与原则 | TradeAgent 当前已实现状态 (Current Done) | 待开发全量缺口 (Backlog for ChatGPT) |
+| 知识模块 (llm-master 标准) | 工业核心痛点与原则 | TradeAgent 当前已实现状态 (Current Done) | 待开发全量缺口 (Backlog) |
 | :--- | :--- | :--- | :--- |
 | **Agent vs Workflow** | 拒绝盲目全自动 ReAct；确定性流程用 Workflow 固化，局部用 Agent 决策 | ✅ **已实现**：`IntentRouter` 单次生成 DAG 任务拓扑与槽位证据，由 `ValidatedPlanExecutor` 确定性编排推进。 | 无（架构形态已完全确立） |
 | **Plan-and-Execute DAG 规划** | 全局任务拆解、依赖拓扑分析、消除工具盲目探索 | ✅ **已实现**：LLM 联合输出 DAG 任务序列，基于前序任务产物自动接力参数。 | 支持执行中途动态二次重规划（Dynamic Re-planning） |
 | **ReAct 思考与行动闭环** | Thought -> Action -> Observation 循环与全链路可观测 | ✅ **已实现**：实时捕获工具调度 Payload、执行耗时、环境物理 Observation，前端提供 ReAct 步骤时间轴。 | 无 |
-| **Failure Modes 防翻车护栏** | 防死循环、防长链路目标漂移（Goal Drift）、防参数幻觉 | ✅ **部分实现**：`EvidencePlanValidator` 强制原文子串零幻觉校验，工具动态剪枝。 | ❌ **缺少**：DAG 最大步数硬熔断器、结构化错误码（Recoverable vs Fatal）、三层上下文分区（防目标漂移）。 |
-| **Multi-Agent Harness 控制外壳** | 架构核心在 Harness 控制层（状态机、持久化、安全边界）而非 Agent 角色扮演 | ✅ **部分实现**：分层意图路由、Redis 防重分布式锁、自适应多轮话题识别与任务流转。 | ❌ **缺少**：Execution Checkpoint 存档点持久化、长事务 Saga 逆向补偿机制。 |
-| **HITL 人机协同审批门禁** | 高危操作（大额折扣、外贸发票生成、外部写操作）禁止 AI 静默执行 | ❌ **尚未实现** | ❌ **核心待开发**：状态机 `WAITING_APPROVAL`、前端交互审批卡片、人工核准/驳回/改参恢复执行。 |
-| **Execution Checkpoints 存档点** | 长耗时执行、等待人工审批或系统重启时状态不丢失，断点续传 | ❌ **尚未实现** | ❌ **核心待开发**：Redis Hash 持久化 DAG 变量池、已完成步与未决步，支持一键恢复执行现场。 |
-| **Saga 分布式柔性逆向补偿** | 外部物理调用无法本地 SQL Rollback，下游失败或审批拒绝必须自动回滚 | ❌ **尚未实现** | ❌ **核心待开发**：工具类注册 `compensate()` 契约，LIFO 逆向补偿栈执行回滚，记录审计日志。 |
-| **Reflection 反思与自愈循环** | 工具入参偶发格式错误不直接抛 500，回传 Error 给 LLM 自我纠偏 | ❌ **尚未实现** | ❌ **核心待开发**：`RecoverableToolException` 捕获，重试计数器（<=2次）触发局部 Prompt 反思自愈。 |
-| **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **已实现**：Working Memory（MySQL 会话持久化 + Redis 滚动摘要截断）。 | ❌ **缺少**：买家画像只填不改提取（Entity Memory）、高分成交案例向量 Few-Shot 沉淀（Episodic Memory）。 |
-| **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **已实现**：RAG 20 题四象限基准、意图 200 题混淆矩阵评测。 | ❌ **缺少**：Agent 执行步数效率（Step Efficiency）、工具误调率与轨迹自动化评测。 |
-| **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **已实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁。 | ❌ **待进阶**：Cross-Encoder 语义深度二次重排（Reranker）。 |
+| **Failure Modes 防翻车护栏** | 防死循环、防长链路目标漂移（Goal Drift）、防参数幻觉 | ✅ **已实现**：`AgentGuardrailEngine`（最大步数 6 步硬熔断、单步 30s 超时、入参哈希死循环检测）与 `PartitionedContextBuilder`（三层物理隔离防目标漂移）。 | 无 |
+| **Multi-Agent Harness 控制外壳** | 架构核心在 Harness 控制层（状态机、持久化、安全边界）而非 Agent 角色扮演 | ✅ **已实现**：分层意图路由、Redis 状态持久化、自适应多轮话题识别与任务流转。 | 无 |
+| **HITL 人机协同审批门禁** | 高危操作（大额折扣、外贸发票生成、外部写操作）禁止 AI 静默执行 | ✅ **已实现**：`HitlApprovalService` 拦截、`WAITING_APPROVAL` 状态机、前端交互审批卡片、核准/驳回/改参断点恢复。 | 无 |
+| **Execution Checkpoints 存档点** | 长耗时执行、等待人工审批或系统重启时状态不丢失，断点续传 | ✅ **已实现**：`ExecutionCheckpointService` Redis 持久化 DAG 拓扑、变量池、已完成/未决步，支持断点续传。 | 无 |
+| **Saga 分布式柔性逆向补偿** | 外部物理调用无法本地 SQL Rollback，下游失败或审批拒绝必须自动回滚 | ✅ **已实现**：`SagaCompensationManager` LIFO 逆向补偿栈执行回滚，工具支持幂等补正与审计记录。 | 无 |
+| **Reflection 反思与自愈循环** | 工具入参偶发格式错误不直接抛 500，回传 Error 给 LLM 自我纠偏 | ✅ **已实现**：`ReflectionCorrectionHandler` 可恢复异常捕获与局部 Prompt 自动反思修正重试（上限2次）。 | 无 |
+| **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **部分实现**：Working Memory（MySQL 会话持久化 + Redis 滚动摘要截断）。 | ❌ **任务六待开发**：买家画像只填不改提取（Entity Memory）、高分成交案例向量 Few-Shot 沉淀（Episodic Memory）。 |
+| **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **部分实现**：RAG 20 题四象限基准、意图 200 题混淆矩阵评测。 | ❌ **任务八待开发**：Agent 执行步数效率（Step Efficiency）、工具误调率与轨迹自动化评测。 |
+| **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **部分实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁。 | ❌ **任务七待开发**：Cross-Encoder 语义深度二次重排（Reranker）。 |
 
 ---
 
@@ -337,20 +337,23 @@
 
 ---
 
-##### 任务五：防翻车工程护栏 (Guardrails: Max Steps & Context Partitioning)
+##### 任务五：防翻车工程护栏 (Guardrails: Max Steps & Context Partitioning) 【✅ 已落地完成】
 
 * **核心目标**：防范 Carl 仓库重点指出的“静默死循环”与“长链路目标漂移（Goal Drift）”。
 * **代码物理路径**：
   - 护栏切面：`server/src/main/java/com/tradeagent/core/dag/guardrails/AgentGuardrailEngine.java`
   - 上下文隔离器：`server/src/main/java/com/tradeagent/modules/ai/chat/PartitionedContextBuilder.java`
+  - 核心编排联动：`CheckpointedDagExecutor.java` (evalutePlan + evaluateStepBeforeExecution + evaluateStepAfterExecution)
+  - 会话组装联动：`AgentContextService.java`
+  - 单元与集成测试：`AgentGuardrailEngineTest.java`、`PartitionedContextBuilderTest.java`、`CheckpointedDagExecutorGuardrailsIntegrationTest.java`
 * **三层上下文隔离（Context Partitioning）**：
   - `ZONE 1: SYSTEM_PROMPT`：严格不可篡改的角色设定与业务红线；
   - `ZONE 2: USER_IMMUTABLE_GOAL`：用户最初发起的原始诉求（全流程置顶加权，永远不会被多轮工具调用挤出视野）；
-  - `ZONE 3: SCRATCHPAD_WORKING`：当前正在推进的单步工具入参和轻量 Observation，单步完成后只保留摘要变量，丢弃冗余大文本。
+  - `ZONE 3: SCRATCHPAD_WORKING`：当前正在推进的单步工具入参和轻量 Observation，单步完成后只保留摘要变量，丢弃冗余大文本（`MAX_OBSERVATION_CHARS = 1000`）。
 * **执行硬边界**：
   - 单个会话单轮任务限制最大 DAG 步骤数 `MAX_TOTAL_STEPS = 6`；
   - 单步骤超时时间 `STEP_TIMEOUT_SECONDS = 30`；
-  - 连续相同入参调用检测（防死循环哈希指纹对比）。
+  - 连续相同入参调用检测（防死循环哈希指纹对比：Canonical JSON Key 升序哈希，连续两次相同调用立即阻断收敛为 `FAILED`）。
 
 ---
 

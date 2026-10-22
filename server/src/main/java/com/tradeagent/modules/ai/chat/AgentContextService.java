@@ -26,9 +26,19 @@ public class AgentContextService {
     private final RoutingWorkflowService workflow;
     private final ToolRegistry tools;
 
+    private final PartitionedContextBuilder partitionedBuilder;
+
     public AgentContextService(AgentSessionMapper sessions, AgentSessionService sessionService,
                                ConversationContextManager contexts, ObjectMapper json,
                                ConversationSummaryService summaries, RoutingWorkflowService workflow, ToolRegistry tools) {
+        this(sessions, sessionService, contexts, json, summaries, workflow, tools, new PartitionedContextBuilder(json));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentContextService(AgentSessionMapper sessions, AgentSessionService sessionService,
+                               ConversationContextManager contexts, ObjectMapper json,
+                               ConversationSummaryService summaries, RoutingWorkflowService workflow,
+                               ToolRegistry tools, PartitionedContextBuilder partitionedBuilder) {
         this.sessions = sessions;
         this.sessionService = sessionService;
         this.contexts = contexts;
@@ -36,6 +46,7 @@ public class AgentContextService {
         this.summaries = summaries;
         this.workflow = workflow;
         this.tools = tools;
+        this.partitionedBuilder = partitionedBuilder != null ? partitionedBuilder : new PartitionedContextBuilder(json);
     }
 
     public record ContextMessage(String role, String content) {}
@@ -46,7 +57,8 @@ public class AgentContextService {
                                 List<ReActStep> reactSteps, RoutingPreviewService.Preview routingPlan,
                                 String routingStatus, List<String> clarifications, boolean shouldGenerate,
                                 String assistantDirective, boolean pending, List<RoutingPreviewService.UserSource> sourceMessages,
-                                com.tradeagent.core.dag.CheckpointedDagExecutor.View execution) {}
+                                com.tradeagent.core.dag.CheckpointedDagExecutor.View execution,
+                                PartitionedContextBuilder.PartitionedPrompt partitionedPrompt) {}
 
     public ContextResult prepare(String tenantId, String sessionId, String currentMessageId) {
         return prepare(tenantId, sessionId, currentMessageId, null, "continue");
@@ -112,10 +124,20 @@ public class AgentContextService {
         List<ContextMessage> messages = prompt.stream().map(m -> new ContextMessage(
                 m instanceof SystemMessage ? "system" : m instanceof AssistantMessage ? "assistant" : "user",
                 m.getContent())).toList();
+        var partitioned = partitionedBuilder.build(
+                null,
+                current.getContent(),
+                history.subList(recentStart, history.size()),
+                summary.text(),
+                reactSteps,
+                telemetry,
+                outcome.execution() != null ? outcome.execution().parameters() : Collections.emptyMap()
+        );
         return new ContextResult(messages, routing, history.size() - recentStart, summary.status(),
                 summary.coveredCount(), recentStart - summary.coveredCount(), telemetry, reactSteps,
                 outcome.routingPlan(), outcome.routingStatus(), outcome.clarifications(), outcome.shouldGenerate(),
-                outcome.assistantDirective(), outcome.pending(), outcome.sourceMessages(), outcome.execution());
+                outcome.assistantDirective(), outcome.pending(), outcome.sourceMessages(), outcome.execution(),
+                partitioned);
     }
 
     public RoutingWorkflowService.Result cancelRouting(String tenantId, String sessionId) {

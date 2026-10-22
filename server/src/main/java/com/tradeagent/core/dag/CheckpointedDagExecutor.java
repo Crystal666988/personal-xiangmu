@@ -1,6 +1,7 @@
 package com.tradeagent.core.dag;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tradeagent.core.dag.guardrails.AgentGuardrailEngine;
 import com.tradeagent.core.dag.model.*;
 import com.tradeagent.modules.ai.intent.ValidatedPlanExecutor;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
@@ -19,6 +20,8 @@ public class CheckpointedDagExecutor {
     private final ObjectMapper json;
     private final SagaCompensationManager saga;
     private final ReflectionCorrectionHandler reflection;
+    private final AgentGuardrailEngine guardrails;
+
     public CheckpointedDagExecutor(ExecutionCheckpointService checkpoints, ToolRegistry tools, ObjectMapper json) {
         this(checkpoints, tools, json, new SagaCompensationManager(checkpoints, tools,
                 (cp, step, event) -> { throw new IllegalStateException("Saga audit store is required"); }), null);
@@ -26,11 +29,21 @@ public class CheckpointedDagExecutor {
     public CheckpointedDagExecutor(ExecutionCheckpointService checkpoints, ToolRegistry tools, ObjectMapper json, SagaCompensationManager saga) {
         this(checkpoints, tools, json, saga, null);
     }
-    @Autowired
     public CheckpointedDagExecutor(ExecutionCheckpointService checkpoints, ToolRegistry tools, ObjectMapper json,
                                   SagaCompensationManager saga, ReflectionCorrectionHandler reflection) {
+        this(checkpoints, tools, json, saga, reflection, new AgentGuardrailEngine(json));
+    }
+    @Autowired
+    public CheckpointedDagExecutor(ExecutionCheckpointService checkpoints, ToolRegistry tools, ObjectMapper json,
+                                  SagaCompensationManager saga, ReflectionCorrectionHandler reflection,
+                                  @Autowired(required = false) AgentGuardrailEngine guardrails) {
         this.checkpoints = checkpoints; this.tools = tools; this.json = json; this.saga = saga;
         this.reflection = reflection;
+        this.guardrails = guardrails != null ? guardrails : new AgentGuardrailEngine(json);
+    }
+
+    public AgentGuardrailEngine getGuardrails() {
+        return guardrails;
     }
     public record View(String checkpointId, long version, long createdAt, String sessionId, String taskId, String status, int currentStepIndex,
                        int totalSteps, List<String> completedStepIds, String approvalId, String toolId,
@@ -52,6 +65,12 @@ public class CheckpointedDagExecutor {
                       List<com.tradeagent.modules.ai.intent.RoutingPreviewService.UserSource> sources, RoutingModelConfig model) {
         ReflectionCorrectionHandler.requireTenant(tenant, model);
         if (!prepared.ready()) throw new IllegalArgumentException("全计划业务预检未通过");
+        if (guardrails != null) {
+            var planDecision = guardrails.evaluatePlan(prepared);
+            if (!planDecision.allowed()) {
+                throw new IllegalArgumentException(planDecision.reason());
+            }
+        }
         DagExecutionState state = new DagExecutionState(); state.setOriginalQuery(query); state.setPrepared(prepared);
         state.setSourceMessages(new ArrayList<>(sources));
         prepared.calls().forEach(call -> state.getSlotVariablesPool().put("step_" + call.index() + ".parameters", call.parameters()));
@@ -119,6 +138,15 @@ public class CheckpointedDagExecutor {
             if ((risk.isPresent() || state.getForcedApprovalSteps().contains(state.getCurrentStepIndex())) && !approved) {
                 armApproval(cp, params, risk.orElse("自动修正改变了已审批参数，需要重新确认。")); return view(cp);
             }
+            if (guardrails != null) {
+                var preDecision = guardrails.evaluateStepBeforeExecution(state, call, params);
+                if (!preDecision.allowed()) {
+                    fail(cp, preDecision.violationType().name(), false);
+                    state.setMessage(preDecision.reason());
+                    checkpoints.update(cp);
+                    return view(cp);
+                }
+            }
             // Persist the execution fence BEFORE the handler; completion is another fenced write.
             state.setStatus(RUNNING); state.setInFlightStep(state.getCurrentStepIndex());
             state.getForcedApprovalSteps().remove(state.getCurrentStepIndex());
@@ -129,6 +157,12 @@ public class CheckpointedDagExecutor {
             ToolExecutionTrace trace = approved
                     ? HitlRiskEvaluator.approvedCall(call.tool(), input, () -> tools.executeTool(call.tool(), input))
                     : tools.executeTool(call.tool(), input);
+            if (guardrails != null) {
+                var postDecision = guardrails.evaluateStepAfterExecution(state, call, trace);
+                if (!postDecision.allowed()) {
+                    trace.setErrorCode(postDecision.violationType().name());
+                }
+            }
             Object output = trace.getOutputResult();
             if ("calculate_tier_price".equals(call.tool()) && output instanceof Map<?, ?> result
                     && result.get("fobTotalUsdRaw") instanceof Number number && number.doubleValue() > 0)
