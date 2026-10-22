@@ -70,11 +70,39 @@ public class PartitionedContextBuilder {
             TurnTelemetry telemetry,
             Map<String, Object> slotVariables
     ) {
-        // 1. 构建 ZONE 1: SYSTEM_PROMPT (系统角色、业务纪律与防越狱红线)
-        String zone1 = buildZone1SystemPrompt(baseSystemPrompt);
+        return build(baseSystemPrompt, userImmutableGoal, recentHistory, historySummary, reactSteps, telemetry, slotVariables, null, null);
+    }
 
-        // 2. 构建 ZONE 2: USER_IMMUTABLE_GOAL (用户初始核心目标锚定)
-        String zone2 = buildZone2ImmutableGoal(userImmutableGoal);
+    /**
+     * 复合记忆增强版核心组装方法 (对标 Carl 三层记忆体系):
+     * - ZONE 1 (SYSTEM_PROMPT): 融入情景向量记忆 (Episodic Few-Shot Exemplars)；
+     * - ZONE 2 (USER_IMMUTABLE_GOAL): 融入客户画像实体记忆 (Entity Memory)；
+     * - ZONE 3 (SCRATCHPAD_WORKING): 维护当前轮次工具变量与轻量 Observation。
+     */
+    public PartitionedPrompt build(
+            String baseSystemPrompt,
+            String userImmutableGoal,
+            List<Message> recentHistory,
+            String historySummary,
+            List<ReActStep> reactSteps,
+            TurnTelemetry telemetry,
+            Map<String, Object> slotVariables,
+            String episodicFewShot,
+            String entityProfile
+    ) {
+        // 1. 构建 ZONE 1: SYSTEM_PROMPT (系统角色、业务纪律、防越狱红线与历史高分成交 Few-Shot 案例)
+        String fullBasePrompt = baseSystemPrompt;
+        if (episodicFewShot != null && !episodicFewShot.isBlank()) {
+            fullBasePrompt = (fullBasePrompt != null && !fullBasePrompt.isBlank() ? fullBasePrompt + "\n\n" : "") + episodicFewShot.trim();
+        }
+        String zone1 = buildZone1SystemPrompt(fullBasePrompt);
+
+        // 2. 构建 ZONE 2: USER_IMMUTABLE_GOAL (用户初始核心目标锚定 + 跨会话买家画像实体记忆)
+        String fullGoal = userImmutableGoal;
+        if (entityProfile != null && !entityProfile.isBlank()) {
+            fullGoal = (fullGoal != null && !fullGoal.isBlank() ? fullGoal + "\n\n" : "") + entityProfile.trim();
+        }
+        String zone2 = buildZone2ImmutableGoal(fullGoal);
 
         // 3. 构建 ZONE 3: SCRATCHPAD_WORKING (轻量工作暂存区，裁剪冗余大文本)
         String zone3 = buildZone3Scratchpad(recentHistory, historySummary, reactSteps, telemetry, slotVariables);
@@ -84,7 +112,7 @@ public class PartitionedContextBuilder {
         // 第 1 条消息必须是不可篡改的 System 区域
         messages.add(new SystemMessage(zone1));
 
-        // 第 2 条消息置顶注入不可篡改的用户初始目标锚定
+        // 第 2 条消息置顶注入不可篡改的用户初始目标锚定与买家实体画像
         messages.add(new SystemMessage(zone2));
 
         // 如果存在历史摘要或暂存工作区内容，以工作区上下文注入

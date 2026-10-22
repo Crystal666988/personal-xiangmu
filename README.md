@@ -179,7 +179,7 @@
 | **Execution Checkpoints 存档点** | 长耗时执行、等待人工审批或系统重启时状态不丢失，断点续传 | ✅ **已实现**：`ExecutionCheckpointService` Redis 持久化 DAG 拓扑、变量池、已完成/未决步，支持断点续传。 | 无 |
 | **Saga 分布式柔性逆向补偿** | 外部物理调用无法本地 SQL Rollback，下游失败或审批拒绝必须自动回滚 | ✅ **已实现**：`SagaCompensationManager` LIFO 逆向补偿栈执行回滚，工具支持幂等补正与审计记录。 | 无 |
 | **Reflection 反思与自愈循环** | 工具入参偶发格式错误不直接抛 500，回传 Error 给 LLM 自我纠偏 | ✅ **已实现**：`ReflectionCorrectionHandler` 可恢复异常捕获与局部 Prompt 自动反思修正重试（上限2次）。 | 无 |
-| **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **部分实现**：Working Memory（MySQL 会话持久化 + Redis 滚动摘要截断）。 | ❌ **任务六待开发**：买家画像只填不改提取（Entity Memory）、高分成交案例向量 Few-Shot 沉淀（Episodic Memory）。 |
+| **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **已实现**：Working（MySQL+滚动摘要截断）、Entity（`EntityMemoryService` 只填空不覆盖+人工加锁保护）、Episodic（`EpisodicMemoryService` pgvector+HNSW 案例沉淀与 Few-Shot 召回）。 | 无 |
 | **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **部分实现**：RAG 20 题四象限基准、意图 200 题混淆矩阵评测。 | ❌ **任务八待开发**：Agent 执行步数效率（Step Efficiency）、工具误调率与轨迹自动化评测。 |
 | **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **部分实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁。 | ❌ **任务七待开发**：Cross-Encoder 语义深度二次重排（Reranker）。 |
 
@@ -357,16 +357,22 @@
 
 ---
 
-##### 任务六：三层复合记忆体系 (Entity Memory + Episodic Memory)
+##### 任务六：三层复合记忆体系 (Entity Memory + Episodic Memory) 【✅ 已落地完成】
 
 * **核心目标**：让智能体具备跨会话的客户画像记忆（Entity）以及相似成交方案的少样本召回能力（Episodic）。
 * **代码物理路径**：
   - 实体画像服务：`server/src/main/java/com/tradeagent/modules/ai/memory/EntityMemoryService.java`
-  - 情景向量记忆：`server/src/main/java/com/tradeagent/modules/ai/memory/EpisodicMemoryService.java`
-  - 客户画像表：`crm_buyer_profile` (MySQL)
-* **业务规范**：
-  1. **只填空不覆盖原则**：对话中提取到买家港口为“汉堡”时，仅当字段为 NULL 时填充，人工确认过的值打上加锁标记；
-  2. **Episodic 向量沉淀**：当外贸报价单成交或获得业务员好评（👍）时，将“客户提问 + 完整报价解决方案 + 调用的工具链”转换为切片存入 `episodic_vector_store`，在新客户输入类似询盘时动态作为 Few-Shot 召回示范。
+  - 实体画像模型与映射：`crm_buyer_profile` 表、`CrmBuyerProfile.java`、`CrmBuyerProfileMapper.java`
+  - 数据库迁移脚本：`server/src/main/resources/db/migration/V20261022_02__crm_buyer_profile.sql`
+  - 情景向量记忆服务：`server/src/main/java/com/tradeagent/modules/ai/memory/EpisodicMemoryService.java`
+  - 情景案例模型：`server/src/main/java/com/tradeagent/modules/ai/memory/episodic/EpisodicCase.java`
+  - 复合记忆 REST API 控制器：`server/src/main/java/com/tradeagent/modules/ai/memory/MemoryController.java`
+  - 三层上下文注入整合：`PartitionedContextBuilder.java` (重载支持同时注入 Few-Shot 示范至 ZONE 1、客户画像至 ZONE 2)
+  - 自动化单元与集成测试：`EntityMemoryServiceTest.java`、`EpisodicMemoryServiceTest.java`、`PartitionedContextBuilderMemoryIntegrationTest.java`
+* **业务规范与核心机制**：
+  1. **只填空不覆盖原则 (Fill-Blank-Only)**：对话中提取到买家港口为“汉堡”时，仅当字段为 NULL 时填充；已有值绝不覆盖；
+  2. **人工加锁不可篡改保护 (Human Verification Lock)**：业务员核准确认过的字段进入 `lockedFieldsJson`，AI 提取引擎永久禁止修改；
+  3. **Episodic 向量沉淀与 Few-Shot 召回**：当外贸报价单成交 (DEAL_CLOSED) 或获得业务员好评 (UPVOTE) 时，将“客户提问 + 完整报价解决方案 + 调用的工具链”转换为 1024 维切片存入 `episodic_case_vector` (HNSW 索引)，在新客户输入类似询盘时动态作为 Few-Shot 召回示范并生成 Markdown Prompt 块。
 
 ---
 
