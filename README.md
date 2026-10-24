@@ -86,7 +86,7 @@
 
 | 指标 | 当前实测值 | 技术实现 |
 | :--- | :--- | :--- |
-| **Top-4 召回率** | **90.0%** (20 题真实大模型评测) | pgvector HNSW + BM25 倒排双路混合检索，3 倍大候选池精排 |
+| **Top-4 召回率** | **90.0%** (20 题真实大模型评测 = 10 正题 + 10 对抗题；小样本口径) | pgvector HNSW + BM25 倒排双路混合检索，3 倍大候选池精排，Cross-Encoder 二次重排 |
 | **对抗诱导防御率** | **100%** (10 道超纲题全部拒答) | 核心实体覆盖率校验 + 0.40 置信度安全门禁 |
 | **单题检索均延** | **245 ms** | 内存 BM25 倒排 + pgvector ANN 并发检索 |
 | **文档持久化** | MySQL 790 条切片 + pgvector 693 条向量 | 双引擎持久化，服务重启零数据丢失 |
@@ -634,3 +634,16 @@ personal-xiangmu/
 1. 本项目为个人在实习与自研期间技术思考沉淀的**完全开源脱敏重构版本**；
 2. 本工程**不包含任何商业机构的内部私有业务代码、生产数据、真实客户档案或商业 API 密钥**；
 3. 遵循 MIT 开源许可协议，旨在用于 AI Agent 工业级工程化落地的学术探讨与技术交流。
+
+### 📋 演示数据声明（P1 可信度改造）
+
+| 模块 | 数据性质 | 生产接入点 |
+| :--- | :--- | :--- |
+| **外汇汇率** | 优先 Frankfurter/ECB 实时参考汇率（缓存 60 分钟，`isLive=true`）；AED 等未覆盖币种回退静态演示表（`isLive=false`） | CFETS/银行牌价 API |
+| **阶梯报价 / 海运费** | `DEMO_PRICE_CATALOG` / `DEMO_STATIC_FREIGHT_TABLE` 静态演示目录（`isLive=false`） | 企业 ERP/货代询价系统 |
+| **海关提单与买家画像** | `DEMO_CUSTOMS_FIXTURES` 固定演示样例（`isLive=false`） | Panjiva/ImportGenius 类海关数据服务 |
+| **拓客 4 渠道 (Maps/FB/LN/WA)** | `DEMO_SYNTHETIC` 合成线索（`isLive=false`） | Google Places API / Meta Graph API / LinkedIn 官方 API / WhatsApp Business API |
+| **营销邮件投递** | Saga 编排/补偿/限流为真实机制，物理投递为模拟 | SendGrid / Amazon SES 等 ESP |
+| **飞书 Docs/Bitable** | 切片入库链路真实；文档拉取与表格回写为演示实现 | 飞书开放平台（需应用凭证） |
+
+所有 `isLive=false` / `DEMO_*` 标记会注入模型提示词（"演示数据禁止声称实时或已核验"），并在工具遥测中透传至前端。

@@ -15,6 +15,10 @@ import java.util.concurrent.Semaphore;
  * 2. 【3 线程配额闸门 (Semaphore)】：严格限制并发投递线程为 3，防止瞬间请求量过大被 SMTP 服务商封 IP；
  * 3. 【人机预演门禁 (Human-in-the-loop)】：高危营销活动默认停留在 PENDING_REVIEW，人工界面点击确认后才触发物理派发；
  * 4. 【违禁词拦截】：投递前执行 SpamWordFilter，敏感词未处理直接阻断。
+ *
+ * P3 演示声明：当前 {@link #simulatePhysicalDispatch} 为模拟投递（恒成功），
+ * 未对接真实邮件网关；生产接入点为海外 SMTP/ESP（如 SendGrid、Amazon SES），
+ * 接入后本类的补偿/限流/门禁机制无需改动，仅替换物理调用实现。
  */
 @Slf4j
 @Service

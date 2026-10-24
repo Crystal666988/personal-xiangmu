@@ -30,6 +30,7 @@ public class FacebookCollectorProvider implements ProspectCollectorProvider {
                 .website("https://facebook.com/gulfgreenpower")
                 .phone("+971-50-1234567")
                 .email("sales@gulfgreen.com")
+                .dataSource("DEMO_SYNTHETIC").isLive(false)
                 .sourceChannel("FACEBOOK")
                 .address("Business Bay, Dubai")
                 .build()

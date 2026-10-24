@@ -30,6 +30,7 @@ public class LinkedInCollectorProvider implements ProspectCollectorProvider {
                 .website("https://www.linkedin.com/company/mesia")
                 .phone("+971-4-3688888")
                 .email("tariq@mesia-members.org")
+                .dataSource("DEMO_SYNTHETIC").isLive(false)
                 .sourceChannel("LINKEDIN")
                 .address("Dubai Media City")
                 .build()

@@ -14,6 +14,10 @@ import java.util.Map;
  * 1. 【Webhook 监听】：配置 Webhook 监听飞书多维表格新增商机事件；
  * 2. 【异步背调】：Agent 接收到记录行后，异步启动海外官网深扫与背景调查；
  * 3. 【Bitable 字段回写】：调飞书开放平台 REST API，将 AI 背调报告、意向评级与跟进话术回写进表格列！
+ *
+ * P3 演示声明：当前 Webhook 载荷字段与回写动作为演示实现（未校验飞书签名、未真实调用
+ * `PUT /open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}`）；
+ * 生产接入需配置飞书应用凭证并按开放平台契约校验 Verification Token。
  */
 @Slf4j
 @Service

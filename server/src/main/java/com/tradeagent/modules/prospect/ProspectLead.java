@@ -39,6 +39,12 @@ public class ProspectLead implements Serializable {
     /** 物理地址 / 地理坐标 */
     private String address;
 
+    /** 数据来源标记：DEMO_SYNTHETIC = 合成演示数据（生产接入真实渠道 API 后置为对应数据源） */
+    private String dataSource;
+
+    /** 是否真实渠道采集数据（演示数据固定 false，下游必须如实披露，禁止包装成已核实线索） */
+    private Boolean isLive;
+
     /** 查重指纹 (根据 规范化域名 / 国际电话 生成唯一哈希，杜绝重复落库) */
     public String generateDeduplicationFingerprint() {
         String cleanDomain = website != null ? website.replaceAll("https?://|www\\.|/.*", "").toLowerCase() : "";

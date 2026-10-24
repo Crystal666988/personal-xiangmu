@@ -25,7 +25,7 @@ public class GoogleMapsCollectorProvider implements ProspectCollectorProvider {
         log.info("【Google Maps 采集】正在扫描地区: {} 关键词: {} 的实体商户与经纬度...", 
                 param.getCountry(), param.getIndustryKeyword());
         
-        // 模拟采集到的实体工商业线索 (生产环境对接 Google Places API / SerpAPI)
+        // 合成演示线索 (生产接入点: Google Places API (New) / SerpAPI Local)，isLive=false 必须向下游如实披露
         return List.of(
             ProspectLead.builder()
                 .companyName("Al-Futtaim Solar Energy LLC")
@@ -33,6 +33,7 @@ public class GoogleMapsCollectorProvider implements ProspectCollectorProvider {
                 .website("https://www.al-futtaim-solar.ae")
                 .phone("+971-4-2085000")
                 .email("procurement@al-futtaim.ae")
+                .dataSource("DEMO_SYNTHETIC").isLive(false)
                 .sourceChannel("GOOGLE_MAPS")
                 .address("Dubai Festival City, Building 3, Dubai, UAE")
                 .build()

@@ -30,6 +30,7 @@ public class WhatsAppCollectorProvider implements ProspectCollectorProvider {
                 .website("https://wa.me/971520000000")
                 .phone("+971-52-0000000")
                 .email("info@arabian-cleantech.com")
+                .dataSource("DEMO_SYNTHETIC").isLive(false)
                 .sourceChannel("WHATSAPP")
                 .address("Sharjah Industrial Area, UAE")
                 .build()

@@ -15,6 +15,10 @@ import java.util.List;
  * 1. 【Block AST 解析】：调飞书 Docs 开放平台拉取富文本块结构 (Heading/Text/Table)；
  * 2. 【无缝对接自研 RAG】：将转换后的标准 Markdown 接入我们的 AstMarkdownChunker 语法切片器；
  * 3. 【向量化同步】：切片自动写入 Milvus / Qdrant 向量库，构建外贸企业专属私域知识问答！
+ *
+ * P3 演示声明：当前 {@link #mockPullFeishuDocAsMarkdown} 为固定样例文档（模拟拉取），
+ * 生产接入点为飞书开放平台 `GET /open-apis/docx/v1/documents/{document_id}/raw_content`
+ * （需 tenant_access_token）；切片与入库链路已是真实实现。
  */
 @Slf4j
 @Service
