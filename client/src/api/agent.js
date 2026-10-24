@@ -98,11 +98,11 @@ export function saveMessageApi(sessionId, data) {
 }
 
 // 路由和历史窗口由后端统一决定，停止生成时可取消本轮上下文请求。
-export function prepareSessionContextApi(sessionId, currentMessageId, signal, tenantId = '1001') {
+export function prepareSessionContextApi(sessionId, currentMessageId, signal, tenantId = '1001', modelConfig = null) {
   return request({
     url: `/agent/sessions/${sessionId}/context`,
     method: 'post',
-    data: { tenantId, currentMessageId },
+    data: { tenantId, currentMessageId, modelConfig },
     signal,
     timeout: 30000 // 首次需要调用后端摘要模型，不能沿用普通接口的 10 秒上限。
   })

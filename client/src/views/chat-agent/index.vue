@@ -739,7 +739,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { marked } from 'marked'
 import {
@@ -1697,7 +1697,14 @@ const sendMessage = async () => {
   currentAbortController = contextController
   let preparedContext
   try {
-    const result = await prepareSessionContextApi(currentSessionId.value, savedUserMessage.id, contextController.signal)
+    const modelCfg = savedModelConfig.value && savedModelConfig.value.apiKey ? {
+      apiKey: savedModelConfig.value.apiKey,
+      baseUrl: savedModelConfig.value.baseUrl,
+      modelName: savedModelConfig.value.modelName,
+      tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
+      provider: 'openai'
+    } : null
+    const result = await prepareSessionContextApi(currentSessionId.value, savedUserMessage.id, contextController.signal, sessionTenantId(currentSessionId.value), modelCfg)
     preparedContext = result.data
     if (preparedContext.execution) {
       applyExecution(preparedContext.execution)
