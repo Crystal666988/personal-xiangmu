@@ -48,6 +48,40 @@
             </div>
           </div>
 
+          <!-- 执行监控（路由/工具/耗时）：专业运维视图，与对话气泡分离 -->
+          <div class="monitor-section">
+            <div class="monitor-header">
+              <span class="section-label">⚡ 执行监控 (本会话)</span>
+              <el-tag size="small" type="info" effect="plain">{{ monitorEntries.length }} 轮</el-tag>
+            </div>
+            <div class="monitor-scroll-list">
+              <div
+                v-for="entry in monitorEntries"
+                :key="entry.index"
+                class="monitor-entry"
+              >
+                <div class="monitor-entry-header" @click="toggleMonitor(entry)">
+                  <span class="monitor-entry-time">{{ entry.time }}</span>
+                  <span class="monitor-entry-stat">
+                    工具 <strong>{{ entry.toolsCalled }}</strong> 次 ｜ <strong>{{ entry.totalLatency }}</strong> ms
+                  </span>
+                  <el-icon class="monitor-arrow" :class="{ 'is-expanded': entry.msg.monitorExpanded }"><ArrowDown /></el-icon>
+                </div>
+                <div v-if="entry.msg.monitorExpanded" class="monitor-entry-body font-mono">
+                  <div class="monitor-query text-truncate" :title="entry.query">问: {{ entry.query }}</div>
+                  <div v-if="entry.routingStatus" class="monitor-line">路由: {{ entry.routingStatus }}</div>
+                  <div v-for="(t, ti) in entry.traces" :key="ti" class="monitor-tool-row">
+                    <span class="monitor-tool-status" :class="t.status === 'SUCCESS' ? 'ok' : 'bad'"></span>
+                    {{ t.toolName || t.toolId }}
+                    <span class="monitor-tool-latency">{{ t.latencyMs }}ms</span>
+                  </div>
+                  <div v-if="!entry.traces.length" class="monitor-line">本轮未调用业务工具</div>
+                </div>
+              </div>
+              <el-empty v-if="monitorEntries.length === 0" description="暂无执行记录" :image-size="55" />
+            </div>
+          </div>
+
           <!-- 底部状态指示 -->
           <div class="sidebar-footer">
             <div class="footer-tenant-badge">
@@ -73,7 +107,7 @@
                 </span>
                 <span class="chat-title">{{ currentSessionTitle }}</span>
                 <el-tag size="small" type="success" effect="plain" class="header-status-tag">
-                  三阶段透明感知 (路由决策 · OCR/AST 调度 · 原生 CoT) · 阿里云 OSS 归档
+                  后端智能体 · 流式对话 · 执行监控见左栏
                 </el-tag>
               </div>
               <div class="chat-header-right">
@@ -169,159 +203,17 @@
                 </div>
 
                 <div class="msg-bubble" :class="{ 'streaming-bubble': msg.isStreaming }">
-                  <!-- 核心特性 1：意图路由与工具剪枝直观指示胶囊条 -->
-                  <div v-if="msg.routing" class="routing-badge-bar">
-                    <span class="routing-domain-pill" :style="{ backgroundColor: msg.routing.color }">
-                      <el-icon :size="12"><component :is="msg.routing.icon || 'Opportunity'" /></el-icon>
-                      <span>意图: {{ msg.routing.domainName }}</span>
-                    </span>
-                    <span class="routing-tools-pill">
-                      已挂载 <strong>{{ msg.routing.activeTools?.length || 0 }}</strong> 个工具 (已剪枝 <strong>{{ msg.routing.prunedToolsCount || 0 }}</strong> 个无关工具)
-                    </span>
-                  </div>
-
-                  <!-- 核心特性 1.2：【ReAct 决策轨迹全透明时间轴】(Thought -> Action -> Observation 标准单步循环) -->
-                  <div v-if="msg.reactSteps && msg.reactSteps.length > 0" class="react-timeline-bar">
-                    <div class="react-timeline-header" @click="toggleReactTimeline(msg)">
-                      <div class="react-header-left">
-                        <span class="react-pill">
-                          <el-icon><Operation /></el-icon>
-                          <span>ReAct 决策轨迹全透明时间轴</span>
-                        </span>
-                        <span class="react-stat-text">
-                          共 <strong>{{ msg.reactSteps.length }}</strong> 步单步循环 ｜
-                          调度工具 <strong>{{ getActionCount(msg.reactSteps) }}</strong> 次 ｜
-                          累计耗时 <strong>{{ getTotalReactDuration(msg.reactSteps) }}ms</strong>
-                        </span>
-                      </div>
-                      <div class="react-header-right">
-                        <el-button size="small" text type="primary" class="react-toggle-btn">
-                          <span>{{ msg.isReactTimelineExpanded ? '收起决策轨迹' : '展开白盒轨迹 (单步循环)' }}</span>
-                          <el-icon :class="{ 'is-expanded': msg.isReactTimelineExpanded }"><ArrowDown /></el-icon>
-                        </el-button>
-                      </div>
-                    </div>
-
-                    <!-- 展开的 ReAct 决策执行时间轴 (el-timeline 步骤流) -->
-                    <transition name="el-zoom-in-top">
-                      <div v-if="msg.isReactTimelineExpanded" class="react-timeline-body">
-                        <el-timeline class="react-step-timeline">
-                          <el-timeline-item
-                            v-for="step in msg.reactSteps"
-                            :key="step.stepIndex"
-                            :type="getStepTimelineType(step.type, step.status)"
-                            :icon="getStepTimelineIcon(step.type)"
-                            :timestamp="`步骤 #${step.stepIndex} ｜ 耗时 ${step.durationMs || 0}ms`"
-                            placement="top"
-                            class="step-timeline-item"
-                          >
-                            <div class="step-card-box" :class="'step-type-' + (step.type || '').toLowerCase()">
-                              <div class="step-badge-row">
-                                <span class="step-badge-tag" :class="'badge-' + (step.type || '').toLowerCase()">
-                                  {{ getStepTypeDisplayLabel(step.type) }}
-                                </span>
-                                <span v-if="step.toolName" class="step-tool-name-tag font-mono">
-                                  {{ step.toolName }} <span class="step-tool-id-text">({{ step.toolId }})</span>
-                                </span>
-                                <el-tag v-if="step.status" size="small" :type="step.status === 'SUCCESS' ? 'success' : 'danger'" effect="plain">
-                                  {{ step.status === 'SUCCESS' ? '执行成功' : '失败' }}
-                                </el-tag>
-                              </div>
-
-                              <!-- THOUGHT 阶段展示 -->
-                              <div v-if="step.type === 'THOUGHT'" class="step-content-thought">
-                                <el-icon color="#409eff" class="mr-1"><Opportunity /></el-icon>
-                                <span>{{ step.thoughtText }}</span>
-                              </div>
-
-                              <!-- ACTION 阶段展示 (结构化入参) -->
-                              <div v-if="step.type === 'ACTION'" class="step-content-action">
-                                <div class="step-sub-header">📥 派发工具抽取入参 (Payload):</div>
-                                <pre class="step-code font-mono"><code>{{ formatJson(step.toolParams) }}</code></pre>
-                              </div>
-
-                              <!-- OBSERVATION 阶段展示 (工具返回值) -->
-                              <div v-if="step.type === 'OBSERVATION'" class="step-content-observation">
-                                <div class="step-sub-header">📤 环境与物理工具观测返回 (Observation Result):</div>
-                                <pre class="step-code font-mono"><code>{{ formatJson(step.toolOutput) }}</code></pre>
-                              </div>
-
-                              <!-- FINAL_ANSWER 阶段展示 -->
-                              <div v-if="step.type === 'FINAL_ANSWER'" class="step-content-final">
-                                <el-icon color="#67c23a" class="mr-1"><Select /></el-icon>
-                                <span>{{ step.summary }}</span>
-                              </div>
-                            </div>
-                          </el-timeline-item>
-                        </el-timeline>
-                      </div>
-                    </transition>
-                  </div>
-
-                  <!-- 核心特性 1.5：物理工具调用全链路遥测卡片 (入参 Query、返回结构体 JSON、真实耗时 ms) -->
-                  <div v-if="(!msg.reactSteps || msg.reactSteps.length === 0) && msg.telemetry && msg.telemetry.toolsCalledCount > 0" class="telemetry-bar">
-                    <div class="telemetry-summary" @click="toggleTelemetry(msg)">
-                      <div class="telemetry-left">
-                        <span class="telemetry-pill">
-                          <el-icon><Tools /></el-icon>
-                          <span>物理工具执行遥测</span>
-                        </span>
-                        <span class="telemetry-stat-text">
-                          本轮已调用 <strong>{{ msg.telemetry.toolsCalledCount }}</strong> 个工具 ｜ 总耗时 <strong>{{ msg.telemetry.totalLatencyMs }}ms</strong> ｜ 平均 <strong>{{ msg.telemetry.avgLatencyMs }}ms</strong>
-                        </span>
-                      </div>
-                      <div class="telemetry-right">
-                        <el-button size="small" text type="primary" class="telemetry-btn">
-                          <span>{{ msg.isTelemetryExpanded ? '收起调用明细' : '展开 Query/返回值明细' }}</span>
-                          <el-icon :class="{ 'is-expanded': msg.isTelemetryExpanded }"><ArrowDown /></el-icon>
-                        </el-button>
-                      </div>
-                    </div>
-
-                    <!-- 展开的工具调用详情卡片 -->
-                    <transition name="el-zoom-in-top">
-                      <div v-if="msg.isTelemetryExpanded" class="telemetry-detail-box">
-                        <div v-for="(trace, tIdx) in msg.telemetry.traces" :key="tIdx" class="trace-card">
-                          <div class="trace-card-header">
-                            <div class="trace-name-row">
-                              <span class="trace-badge">#{{ tIdx + 1 }}</span>
-                              <span class="trace-tool-name">{{ trace.toolName }}</span>
-                              <span class="trace-tool-id font-mono">({{ trace.toolId }})</span>
-                              <el-tag size="small" :type="trace.status === 'SUCCESS' ? 'success' : 'danger'" effect="plain">
-                                {{ trace.status === 'SUCCESS' ? '执行成功' : '失败' }}
-                              </el-tag>
-                            </div>
-                            <div class="trace-time-badge font-mono">
-                              ⏱️ {{ trace.latencyMs }}ms
-                            </div>
-                          </div>
-
-                          <div class="trace-body">
-                            <div class="trace-col">
-                              <div class="trace-sub-title">📥 抽取入参 (Query):</div>
-                              <pre class="trace-code font-mono"><code>{{ formatJson(trace.queryInput) }}</code></pre>
-                            </div>
-                            <div class="trace-col">
-                              <div class="trace-sub-title">📤 工具返回结构体 (Output JSON):</div>
-                              <pre class="trace-code font-mono"><code>{{ formatJson(trace.outputResult) }}</code></pre>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </transition>
-                  </div>
-
                   <!-- 核心特性 2：三阶段透明感知 CoT 深度思考链卡片 -->
                   <div v-if="msg.thought || msg.isThinking" class="thought-container">
                     <div class="thought-header" @click="toggleThought(msg)">
                       <div class="thought-title">
                         <span v-if="msg.isThinking" class="thinking-spinner">
                           <el-icon class="is-loading"><Loading /></el-icon>
-                          <span>思考与底层调用中 (已用时 {{ msg.thoughtDuration || 1 }} 秒)...</span>
+                          <span>深度思考中 (已用时 {{ msg.thoughtDuration || 1 }} 秒)...</span>
                         </span>
                         <span v-else class="thought-done">
                           <el-icon><Opportunity /></el-icon>
-                          <span>已完成三阶段推导与深度推理 (用时 {{ msg.thoughtDuration || 2 }} 秒)</span>
+                          <span>已完成深度思考 (用时 {{ msg.thoughtDuration || 2 }} 秒)</span>
                         </span>
                       </div>
                       <div class="thought-toggle-arrow">
@@ -944,6 +836,42 @@ const loadSavedConfig = async () => {
     console.warn('加载生效模型配置失败', e)
     savedModelConfig.value = null
   }
+}
+
+// 执行监控：从本会话消息里提取每轮的路由/工具/耗时（气泡不再展示，专业视图收敛于此）
+const monitorEntries = computed(() => {
+  const entries = []
+  const msgs = currentMessages.value
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i]
+    if (m.role !== 'assistant') continue
+    const telemetry = m.telemetry || (m.routing && m.routing.telemetry) || null
+    const steps = m.reactSteps || (m.routing && m.routing.reactSteps) || []
+    const routingStatus = m.routingStatus || (m.routing && m.routing.routingStatus) || ''
+    const traces = telemetry && telemetry.traces
+      ? telemetry.traces.map(t => ({ toolId: t.toolId, toolName: t.toolName, status: t.status, latencyMs: t.latencyMs }))
+      : []
+    if (!telemetry && !steps.length && !routingStatus) continue
+    let query = ''
+    for (let j = i - 1; j >= 0; j--) {
+      if (msgs[j].role === 'user') { query = msgs[j].content; break }
+    }
+    entries.push({
+      index: i,
+      msg: m,
+      time: m.time || '',
+      query: (query || '').slice(0, 60),
+      routingStatus,
+      toolsCalled: telemetry ? telemetry.toolsCalledCount || 0 : 0,
+      totalLatency: telemetry ? telemetry.totalLatencyMs || 0 : 0,
+      traces
+    })
+  }
+  return entries.reverse()
+})
+
+const toggleMonitor = (entry) => {
+  entry.msg.monitorExpanded = !entry.msg.monitorExpanded
 }
 
 const activeModelDisplayName = computed(() => {
@@ -1675,50 +1603,11 @@ const sendMessage = async () => {
     ElMessage.warning('本轮历史摘要已生成，但保存失败；下次可能需要重新整理')
   }
 
-  // 4. 构建三阶段透明感知思维链 (阶段一路由决策与工具遥测 + 阶段二底层 OCR/AST 调度 + 阶段三 CoT 推导)
-  let thoughtPrefix = `🧭 **【阶段一：意图路由与上下文工具剪枝决策引擎】**
-- **业务领域判定**: 🎯 **${routing.domainName}** (\`${routing.domain}\`)
-- **路由决策依据**: ${routing.reason}
-- **上下文工具剪枝**: ✂️ 为杜绝模型幻觉与 Token 浪费，已自动剪枝 **${routing.prunedToolsCount}** 个无关业务工具
-- **动态激活工具集 (${routing.activeTools.length} 个)**:
-${routing.activeTools.map((t, idx) => `  ${idx + 1}. 🛠️ \`${t.id}\` (${t.name}): ${t.desc}`).join('\n')}
-- **历史窗口**: 最近 ${preparedContext.historyMessageCount} 条历史消息（最多20条）
-- **历史摘要**: 已覆盖 ${preparedContext.summaryMessageCount} 条早期记录；尚未覆盖 ${preparedContext.unsummarizedMessageCount} 条
-`
-  if (reactSteps && reactSteps.length > 0) {
-    thoughtPrefix += `- **ReAct 决策轨迹**: 🔄 **已构建 ${reactSteps.length} 步单步决策流 (Thought -> Action -> Observation)**，每步入参与观测值已同步透传至上下文。\n`
-  }
-
-  if (telemetry && telemetry.toolsCalledCount > 0) {
-    thoughtPrefix += `- **工具执行遥测**: ⚡ **本轮已物理执行 ${telemetry.toolsCalledCount} 个工具** (总耗时: **${telemetry.totalLatencyMs}ms**，平均 **${telemetry.avgLatencyMs}ms/个**)
-${telemetry.traces.map((tr, idx) => `  * [调用 #${idx + 1}] \`${tr.toolId}\` (${tr.toolName}) -> ⏱️ **${tr.latencyMs}ms** | 状态: ${tr.status}`).join('\n')}
-`
-  } else {
-    thoughtPrefix += `- **工具执行遥测**: 纯问答/通用对话，无需调用底层工具 (剪枝率 100%)\n`
-  }
-
-  // 如果处理了文件或图片，增加阶段二：底层 OCR / AST 真实调度回显
+  // 4. 极简思考前缀：意图路由/工具调度/OCR 细节已移至左栏「执行监控」，对话流只保留思考与正文
+  let thoughtPrefix = `🧠 已完成意图路由与工具调度（详情见左侧「执行监控」面板）。深度推导开始。`
   if (documentExtractResult) {
-    thoughtPrefix += `
----
-
-📷 **【阶段二：多模态感知与文件/OCR 提取管道 (真实底层调用)】**
-- **调度引擎**: ⚡ **${documentExtractResult.ocrEngine || '原生文档与图表抽取引擎'}**
-- **处理对象**: 📄 \`${documentExtractResult.fileName}\` (${formatFileSize(fileToUpload ? fileToUpload.size : 0)})
-- **云端存储归档**: ☁️ 阿里云 OSS 归档完成 [点击查看 OSS 原件](${documentExtractResult.ossUrl || '#'})
-- **提取状态**: ✅ 耗时 **${documentExtractResult.costMs}ms** ｜ 成功提取 **${documentExtractResult.characterCount}** 字符
-- **OCR/文本切片回显**:
-\`\`\`text
-${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? documentExtractResult.rawMarkdown.slice(0, 200) + '...' : '已结构化载入')}
-\`\`\`
-`
+    thoughtPrefix = `🧠 已完成后端文档解析 (${documentExtractResult.characterCount} 字符) 与意图调度。深度推导开始。`
   }
-
-  thoughtPrefix += `
----
-
-🧠 **【阶段三：大模型认知与深度推导过程 (CoT 推理)】**
-`
 
   // 5. 创建 AI 回复卡片
   const assistantTime = new Date().toLocaleTimeString().slice(0, 5)
@@ -2462,391 +2351,76 @@ onMounted(() => {
           font-size: 14px;
           word-break: break-word;
 
-          // 核心特性 1：意图路由与工具剪枝指示胶囊条
-          .routing-badge-bar {
-            display: flex;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-bottom: 10px;
-            padding-bottom: 8px;
-            border-bottom: 1px dashed #ebeef5;
+  /* 执行监控面板（左栏） */
+  .monitor-section {
+    border-top: 1px solid #f2f6fc;
+    padding: 8px 0 4px;
 
-            .routing-domain-pill {
-              display: inline-flex;
-              align-items: center;
-              gap: 4px;
-              color: #ffffff;
-              padding: 2px 8px;
-              border-radius: 10px;
-              font-size: 11px;
-              font-weight: 500;
-            }
+    .monitor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 16px 6px;
+    }
 
-            .routing-tools-pill {
-              font-size: 11px;
-              color: #606266;
-              background-color: #f4f4f5;
-              padding: 2px 8px;
-              border-radius: 4px;
-              border: 1px solid #e9e9eb;
+    .monitor-scroll-list {
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 0 8px;
+    }
 
-              strong {
-                color: #409eff;
-              }
-            }
-          }
+    .monitor-entry {
+      border: 1px solid #ebeef5;
+      border-radius: 6px;
+      margin-bottom: 6px;
+      background: #fafbfc;
+      overflow: hidden;
+    }
 
-          // 核心特性 1.2：【ReAct 决策轨迹全透明时间轴】样式
-          .react-timeline-bar {
-            background: linear-gradient(135deg, #f4f8fe 0%, #f8fafd 100%);
-            border: 1px solid #d9ecff;
-            border-radius: 8px;
-            padding: 10px 14px;
-            margin-bottom: 12px;
-            box-shadow: 0 1px 3px rgba(64, 158, 255, 0.05);
+    .monitor-entry-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      color: #606266;
 
-            .react-timeline-header {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              cursor: pointer;
-              user-select: none;
+      &:hover { background: #f5f7fa; }
 
-              .react-header-left {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex-wrap: wrap;
+      .monitor-entry-time { color: #909399; }
+      .monitor-entry-stat { flex: 1; text-align: right; }
+      .monitor-arrow { transition: transform 0.2s; }
+      .monitor-arrow.is-expanded { transform: rotate(180deg); }
+    }
 
-                .react-pill {
-                  display: inline-flex;
-                  align-items: center;
-                  gap: 4px;
-                  background: linear-gradient(135deg, #409eff 0%, #3a8ee6 100%);
-                  color: #ffffff;
-                  font-size: 11px;
-                  font-weight: 600;
-                  padding: 3px 10px;
-                  border-radius: 12px;
-                  box-shadow: 0 1px 2px rgba(64, 158, 255, 0.2);
-                }
+    .monitor-entry-body {
+      padding: 6px 10px 8px;
+      border-top: 1px dashed #ebeef5;
+      font-size: 11.5px;
+      color: #606266;
 
-                .react-stat-text {
-                  font-size: 12px;
-                  color: #409eff;
+      .monitor-query { color: #303133; margin-bottom: 4px; }
+      .monitor-line { margin: 2px 0; }
 
-                  strong {
-                    color: #1e6acb;
-                    font-weight: 600;
-                  }
-                }
-              }
+      .monitor-tool-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 3px 0;
+      }
 
-              .react-header-right {
-                .react-toggle-btn {
-                  font-size: 12px;
-                  padding: 0;
-                  height: auto;
-                  color: #409eff;
+      .monitor-tool-status {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        &.ok { background: #67c23a; }
+        &.bad { background: #f56c6c; }
+      }
 
-                  .is-expanded {
-                    transform: rotate(180deg);
-                    transition: transform 0.2s ease;
-                  }
-                }
-              }
-            }
-
-            .react-timeline-body {
-              margin-top: 12px;
-              padding-top: 10px;
-              border-top: 1px dashed #d9ecff;
-
-              .react-step-timeline {
-                padding-left: 6px;
-                margin-top: 6px;
-
-                :deep(.el-timeline-item__timestamp) {
-                  font-size: 11px;
-                  color: #909399;
-                  margin-bottom: 6px;
-                }
-
-                .step-card-box {
-                  background-color: #ffffff;
-                  border: 1px solid #e4e7ed;
-                  border-left: 3px solid #409eff;
-                  border-radius: 6px;
-                  padding: 10px 12px;
-                  margin-bottom: 4px;
-                  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-
-                  &.step-type-thought {
-                    border-left-color: #409eff;
-                    background: linear-gradient(180deg, #fdfefe 0%, #ffffff 100%);
-                  }
-
-                  &.step-type-action {
-                    border-left-color: #e6a23c;
-                    background: linear-gradient(180deg, #fffcf6 0%, #ffffff 100%);
-                  }
-
-                  &.step-type-observation {
-                    border-left-color: #67c23a;
-                    background: linear-gradient(180deg, #f7fdf4 0%, #ffffff 100%);
-                  }
-
-                  &.step-type-final_answer {
-                    border-left-color: #303133;
-                    background: linear-gradient(180deg, #fafafa 0%, #ffffff 100%);
-                  }
-
-                  .step-badge-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    flex-wrap: wrap;
-                    margin-bottom: 8px;
-
-                    .step-badge-tag {
-                      font-size: 11px;
-                      font-weight: 600;
-                      padding: 2px 8px;
-                      border-radius: 4px;
-
-                      &.badge-thought {
-                        background-color: #ecf5ff;
-                        color: #409eff;
-                        border: 1px solid #d9ecff;
-                      }
-
-                      &.badge-action {
-                        background-color: #fdf6ec;
-                        color: #e6a23c;
-                        border: 1px solid #faecd8;
-                      }
-
-                      &.badge-observation {
-                        background-color: #f0f9eb;
-                        color: #67c23a;
-                        border: 1px solid #e1f3d8;
-                      }
-
-                      &.badge-final_answer {
-                        background-color: #f4f4f5;
-                        color: #303133;
-                        border: 1px solid #e9e9eb;
-                      }
-                    }
-
-                    .step-tool-name-tag {
-                      font-size: 12px;
-                      font-weight: 600;
-                      color: #303133;
-
-                      .step-tool-id-text {
-                        font-size: 11px;
-                        color: #909399;
-                        font-weight: normal;
-                      }
-                    }
-                  }
-
-                  .step-content-thought {
-                    font-size: 12px;
-                    color: #409eff;
-                    line-height: 1.5;
-                    display: flex;
-                    align-items: flex-start;
-                  }
-
-                  .step-sub-header {
-                    font-size: 11px;
-                    font-weight: 600;
-                    color: #606266;
-                    margin-bottom: 4px;
-                  }
-
-                  .step-code {
-                    background-color: #282c34;
-                    color: #abb2bf;
-                    padding: 8px 10px;
-                    border-radius: 4px;
-                    font-size: 11px;
-                    line-height: 1.45;
-                    max-height: 220px;
-                    overflow: auto;
-                    margin: 0;
-                  }
-
-                  .step-content-final {
-                    font-size: 12px;
-                    color: #303133;
-                    line-height: 1.5;
-                    display: flex;
-                    align-items: flex-start;
-                  }
-                }
-              }
-            }
-          }
-
-          // 核心特性 1.5：物理工具调用全链路遥测卡片
-          .telemetry-bar {
-            background: linear-gradient(135deg, #f0f9eb 0%, #f4fbf0 100%);
-            border: 1px solid #e1f3d8;
-            border-radius: 6px;
-            padding: 8px 12px;
-            margin-bottom: 10px;
-
-            .telemetry-summary {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              cursor: pointer;
-              user-select: none;
-
-              .telemetry-left {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                flex-wrap: wrap;
-
-                .telemetry-pill {
-                  display: inline-flex;
-                  align-items: center;
-                  gap: 4px;
-                  background-color: #67c23a;
-                  color: #ffffff;
-                  font-size: 11px;
-                  font-weight: 600;
-                  padding: 2px 8px;
-                  border-radius: 10px;
-                }
-
-                .telemetry-stat-text {
-                  font-size: 12px;
-                  color: #529b2e;
-
-                  strong {
-                    color: #2b7308;
-                    font-weight: 600;
-                  }
-                }
-              }
-
-              .telemetry-right {
-                .telemetry-btn {
-                  font-size: 12px;
-                  padding: 0;
-                  height: auto;
-                  color: #409eff;
-
-                  .is-expanded {
-                    transform: rotate(180deg);
-                    transition: transform 0.2s ease;
-                  }
-                }
-              }
-            }
-
-            .telemetry-detail-box {
-              margin-top: 10px;
-              padding-top: 8px;
-              border-top: 1px dashed #d1edc4;
-              display: flex;
-              flex-direction: column;
-              gap: 8px;
-
-              .trace-card {
-                background-color: #ffffff;
-                border: 1px solid #e4e7ed;
-                border-radius: 6px;
-                padding: 10px 12px;
-                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
-
-                .trace-card-header {
-                  display: flex;
-                  justify-content: space-between;
-                  align-items: center;
-                  margin-bottom: 8px;
-                  padding-bottom: 6px;
-                  border-bottom: 1px solid #f2f3f5;
-
-                  .trace-name-row {
-                    display: flex;
-                    align-items: center;
-                    gap: 6px;
-
-                    .trace-badge {
-                      background-color: #e9e9eb;
-                      color: #606266;
-                      font-size: 10px;
-                      font-weight: 600;
-                      padding: 1px 5px;
-                      border-radius: 3px;
-                    }
-
-                    .trace-tool-name {
-                      font-size: 13px;
-                      font-weight: 600;
-                      color: #303133;
-                    }
-
-                    .trace-tool-id {
-                      font-size: 11px;
-                      color: #909399;
-                    }
-                  }
-
-                  .trace-time-badge {
-                    font-size: 12px;
-                    font-weight: 600;
-                    color: #e6a23c;
-                    background-color: #fdf6ec;
-                    padding: 2px 8px;
-                    border-radius: 4px;
-                    border: 1px solid #faecd8;
-                  }
-                }
-
-                .trace-body {
-                  display: grid;
-                  grid-template-columns: 1fr 1fr;
-                  gap: 10px;
-
-                  @media (max-width: 768px) {
-                    grid-template-columns: 1fr;
-                  }
-
-                  .trace-col {
-                    .trace-sub-title {
-                      font-size: 11px;
-                      font-weight: 600;
-                      color: #606266;
-                      margin-bottom: 4px;
-                    }
-
-                    .trace-code {
-                      margin: 0;
-                      padding: 8px 10px;
-                      background-color: #f8f9fa;
-                      border: 1px solid #eaecf0;
-                      border-radius: 4px;
-                      font-size: 11px;
-                      line-height: 1.45;
-                      max-height: 160px;
-                      overflow-y: auto;
-                      color: #24292e;
-                      white-space: pre-wrap;
-                      word-break: break-all;
-                    }
-                  }
-                }
-              }
-            }
-          }
+      .monitor-tool-latency { color: #909399; margin-left: auto; }
+    }
+  }
 
           // 核心特性 2：CoT 思考链卡片 (集成阶段一路由决策、阶段二底层调度与阶段三模型深度推理)
           .thought-container {

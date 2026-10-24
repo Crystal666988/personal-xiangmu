@@ -307,11 +307,21 @@ public class AgentChatStreamService {
                 }
             }
             TurnTelemetry telemetry = context.telemetry();
+            List<Map<String, Object>> traceRows = new ArrayList<>();
+            if (telemetry != null && telemetry.getTraces() != null) {
+                for (var trace : telemetry.getTraces()) {
+                    traceRows.add(Map.of("toolId", Objects.toString(trace.getToolId(), ""),
+                            "toolName", Objects.toString(trace.getToolName(), ""),
+                            "status", Objects.toString(trace.getStatus(), ""),
+                            "latencyMs", trace.getLatencyMs()));
+                }
+            }
             return json.writeValueAsString(Map.of(
                     "routingStatus", Objects.toString(context.routingStatus(), ""),
                     "telemetry", Map.of(
                             "toolsCalledCount", telemetry != null ? telemetry.getToolsCalledCount() : 0,
-                            "totalLatencyMs", telemetry != null ? telemetry.getTotalLatencyMs() : 0),
+                            "totalLatencyMs", telemetry != null ? telemetry.getTotalLatencyMs() : 0,
+                            "traces", traceRows),
                     "reactSteps", steps));
         } catch (Exception e) {
             return null;
