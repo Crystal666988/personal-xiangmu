@@ -146,3 +146,32 @@ export async function saveModelConfigApi(data) {
     }
   })
 }
+
+
+// ======================== 租户级模型配置 CRUD（数据库存储，租户隔离） ========================
+
+// 配置列表（API Key 只回掩码 keyTail，绝无明文）
+export function listModelConfigsApi(tenantId = '1001') {
+  return request({ url: '/model-configs', method: 'get', params: { tenantId } })
+}
+
+// 当前生效配置（掩码）
+export function getActiveModelConfigApi(tenantId = '1001') {
+  return request({ url: '/model-configs/active', method: 'get', params: { tenantId } })
+}
+
+export function createModelConfigApi(data, tenantId = '1001') {
+  return request({ url: '/model-configs', method: 'post', params: { tenantId }, data })
+}
+
+export function updateModelConfigApi(id, data, tenantId = '1001') {
+  return request({ url: `/model-configs/${id}`, method: 'put', params: { tenantId }, data })
+}
+
+export function deleteModelConfigApi(id, tenantId = '1001') {
+  return request({ url: `/model-configs/${id}`, method: 'delete', params: { tenantId } })
+}
+
+export function enableModelConfigApi(id, tenantId = '1001') {
+  return request({ url: `/model-configs/${id}/enable`, method: 'post', params: { tenantId } })
+}

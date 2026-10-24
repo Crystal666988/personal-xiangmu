@@ -5,6 +5,7 @@ import com.tradeagent.core.conversation.ConversationContextManager;
 import com.tradeagent.core.model.ModelConfig;
 import com.tradeagent.modules.ai.intent.EvidenceToolCatalog;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
+import com.tradeagent.modules.ai.modelconfig.TenantModelConfigService;
 import com.tradeagent.modules.ai.intent.RoutingPlanGenerator;
 import com.tradeagent.modules.ai.intent.RoutingPreviewService;
 import com.tradeagent.modules.ai.intent.RoutingWorkflowService;
@@ -107,6 +108,13 @@ class AgentChatStreamServiceTest {
     private final AgentContextService contextService = new AgentContextService(sessions, history,
             new ConversationContextManager(), new ObjectMapper(), summaries, workflow, toolRegistry);
 
+    // 租户配置服务桩：默认未配置任何生效模型（离线路径）
+    private final TenantModelConfigService modelConfigs = new TenantModelConfigService(null) {
+        @Override public java.util.Optional<RoutingModelConfig> resolveActive(String tenantId) {
+            return java.util.Optional.empty();
+        }
+    };
+
     static class FakeStreamer implements ChatStreamer {
         final List<List<Message>> prompts = new ArrayList<>();
         ModelConfig lastConfig;
@@ -125,7 +133,7 @@ class AgentChatStreamServiceTest {
     }
 
     private AgentChatStreamService service(FakeStreamer streamer) {
-        return new AgentChatStreamService(contextService, history, streamer, new ObjectMapper());
+        return new AgentChatStreamService(contextService, history, streamer, modelConfigs, new ObjectMapper());
     }
 
     private List<ServerSentEvent<String>> collect(AgentChatStreamService service, RoutingModelConfig config) {

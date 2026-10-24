@@ -776,6 +776,7 @@ import {
   getIntentBenchmarkDetailApi,
   deleteIntentBenchmarkApi
 } from '@/api/agent'
+import { getActiveModelConfigApi } from '@/api/model'
 
 // 配置 marked 解析器
 marked.setOptions({
@@ -933,22 +934,23 @@ const currentSessionTitle = computed(() => {
 
 // 模型配置读取
 const savedModelConfig = ref(null)
-const loadSavedConfig = () => {
-  const raw = localStorage.getItem('tradeagent_model_config')
-  if (raw) {
-    try {
-      savedModelConfig.value = JSON.parse(raw)
-    } catch (e) {
-      console.warn('Failed to parse model config', e)
-    }
+// 从后端读取租户"使用中"配置（掩码，无明文 Key）；真实密钥只在服务端解析
+const loadSavedConfig = async () => {
+  const tenant = sessionTenantId(currentSessionId.value)
+  try {
+    const res = await getActiveModelConfigApi(tenant)
+    savedModelConfig.value = res && res.data ? res.data : null
+  } catch (e) {
+    console.warn('加载生效模型配置失败', e)
+    savedModelConfig.value = null
   }
 }
 
 const activeModelDisplayName = computed(() => {
-  if (savedModelConfig.value?.apiKey) {
-    const keyBrief = savedModelConfig.value.apiKey.length > 6 ? savedModelConfig.value.apiKey.slice(0, 4) + '...' : '已存'
-    return `${savedModelConfig.value.modelName || 'qwen-plus'} (${keyBrief})`
+  if (savedModelConfig.value?.hasApiKey) {
+    return `${savedModelConfig.value.modelName || 'qwen-plus'} (${savedModelConfig.value.keyTail || '已配置'})`
   }
+  if (savedModelConfig.value?.modelName) return `${savedModelConfig.value.modelName} (未配置密钥)`
   return '未配置密钥 (本地引擎)'
 })
 
@@ -1090,8 +1092,8 @@ async function executeCardAction(action) {
   }
 }
 
-const submitApproval = (action, params) => executeCardAction((execution, tenant) => decideApprovalApi(execution, tenant, action, params, savedModelConfig.value))
-const resumeExecution = () => executeCardAction((execution, tenant) => resumeCheckpointApi(execution, tenant, savedModelConfig.value))
+const submitApproval = (action, params) => executeCardAction((execution, tenant) => decideApprovalApi(execution, tenant, action, params, null))
+const resumeExecution = () => executeCardAction((execution, tenant) => resumeCheckpointApi(execution, tenant, null))
 const cancelExecution = () => executeCardAction((execution, tenant) => cancelCheckpointApi(execution, tenant))
 
 let executionRefreshTimer
@@ -1452,7 +1454,7 @@ async function streamBackendChat({ tenantId, sessionId, messageId, payload, sign
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload ? JSON.stringify(payload) : undefined,
     signal
   })
   if (!response.ok || !response.body) {
@@ -1644,14 +1646,7 @@ const sendMessage = async () => {
   currentAbortController = contextController
   let preparedContext
   try {
-    const modelCfg = savedModelConfig.value && savedModelConfig.value.apiKey ? {
-      apiKey: savedModelConfig.value.apiKey,
-      baseUrl: savedModelConfig.value.baseUrl,
-      modelName: savedModelConfig.value.modelName,
-      tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
-      provider: 'openai'
-    } : null
-    const result = await prepareSessionContextApi(currentSessionId.value, savedUserMessage.id, contextController.signal, sessionTenantId(currentSessionId.value), modelCfg)
+    const result = await prepareSessionContextApi(currentSessionId.value, savedUserMessage.id, contextController.signal, sessionTenantId(currentSessionId.value))
     preparedContext = result.data
     if (preparedContext.execution) {
       applyExecution(preparedContext.execution)
@@ -1757,9 +1752,8 @@ ${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? docum
   }, 1000)
 
   // 6. 真实大模型调用与 CoT 思考链流式输出
-  const userApiKey = savedModelConfig.value?.apiKey?.trim()
-  const userBaseUrl = savedModelConfig.value?.baseUrl || 'https://api.deepseek.com/v1'
-  let userModelName = savedModelConfig.value?.modelName || 'qwen-plus'
+  const hasActiveModel = Boolean(savedModelConfig.value?.hasApiKey)
+  const userModelName = savedModelConfig.value?.modelName || 'qwen-plus'
 
   // 助手消息落库函数
   let isSaved = false
@@ -1806,7 +1800,7 @@ ${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? docum
     const rawText = documentExtractResult.rawMarkdown.trim()
     const isImage = fileToUpload && isImageFile(fileToUpload.name)
 
-    if (userApiKey) {
+    if (hasActiveModel) {
       ElMessage.success(`正在由后端智能体调度 ${userModelName} 结合文档内容流式作答...`)
 
       const streamer = createSmoothStreamer({
@@ -1825,13 +1819,6 @@ ${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? docum
           tenantId: sessionTenantId(currentSessionId.value),
           sessionId: currentSessionId.value,
           messageId: savedUserMessage.id,
-          payload: {
-            apiKey: userApiKey,
-            baseUrl: userBaseUrl,
-            modelName: userModelName,
-            tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
-            provider: 'openai'
-          },
           signal: currentAbortController.signal,
           onDelta: (chunk) => {
             streamer.push(chunk)
@@ -1896,8 +1883,8 @@ ${rawText}
     }
   }
 
-  // 场景 B: 普通文字对话 (有 API Key)
-  if (userApiKey) {
+  // 场景 B: 普通文字对话 (租户已启用模型配置)
+  if (hasActiveModel) {
     ElMessage.info(`正在由 ${userModelName} 结合数据库多轮上下文思考并回答...`)
 
     const streamer = createSmoothStreamer({
@@ -1916,13 +1903,6 @@ ${rawText}
         tenantId: sessionTenantId(currentSessionId.value),
         sessionId: currentSessionId.value,
         messageId: savedUserMessage.id,
-        payload: {
-          apiKey: userApiKey,
-          baseUrl: userBaseUrl,
-          modelName: userModelName,
-          tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
-          provider: 'openai'
-        },
         signal: currentAbortController.signal,
         onDelta: (chunk) => {
           streamer.push(chunk)

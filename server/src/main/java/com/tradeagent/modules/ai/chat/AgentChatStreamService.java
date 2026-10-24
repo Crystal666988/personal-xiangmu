@@ -3,6 +3,7 @@ package com.tradeagent.modules.ai.chat;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeagent.core.common.TokenEstimator;
 import com.tradeagent.core.dag.ReActStep;
+import com.tradeagent.modules.ai.modelconfig.TenantModelConfigService;
 import com.tradeagent.core.model.ModelConfig;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
 import com.tradeagent.modules.ai.tools.TurnTelemetry;
@@ -45,13 +46,15 @@ public class AgentChatStreamService {
     private final AgentContextService contextService;
     private final AgentSessionService sessionService;
     private final ChatStreamer streamer;
+    private final TenantModelConfigService modelConfigs;
     private final ObjectMapper json;
 
     public AgentChatStreamService(AgentContextService contextService, AgentSessionService sessionService,
-                                  ChatStreamer streamer, ObjectMapper json) {
+                                  ChatStreamer streamer, TenantModelConfigService modelConfigs, ObjectMapper json) {
         this.contextService = contextService;
         this.sessionService = sessionService;
         this.streamer = streamer;
+        this.modelConfigs = modelConfigs;
         this.json = json;
     }
 
@@ -71,9 +74,15 @@ public class AgentChatStreamService {
     private Flux<ServerSentEvent<String>> deferredBody(String tenantId, String sessionId, String messageId,
                                                        RoutingModelConfig routingConfig) {
         return Flux.defer(() -> {
+            // 前端不再携带 API Key：在进入规划管线前解析租户"使用中"的数据库配置
+            RoutingModelConfig effectiveConfig = routingConfig != null
+                    && routingConfig.getApiKey() != null && !routingConfig.getApiKey().isBlank()
+                    ? routingConfig
+                    : modelConfigs.resolveActive(tenantId).orElse(null);
+
             AgentContextService.ContextResult context;
             try {
-                context = contextService.prepare(tenantId, sessionId, messageId, routingConfig, "continue");
+                context = contextService.prepare(tenantId, sessionId, messageId, effectiveConfig, "continue");
             } catch (Exception e) {
                 log.warn("【SSE 对话】prepare 失败: {}", e.getMessage());
                 return Flux.just(event("error", "任务准备失败：" + e.getMessage()), earlyDone());
@@ -100,7 +109,7 @@ public class AgentChatStreamService {
             log.info("【SSE 对话】本轮 Prompt 消息 {} 条, 估算上下文 Token ≈ {}", prompt.size(), promptTokensEstimate);
             ModelConfig modelConfig;
             try {
-                modelConfig = toModelConfig(tenantId, routingConfig);
+                modelConfig = toModelConfig(tenantId, effectiveConfig);
             } catch (Exception e) {
                 return Flux.just(event("error", e.getMessage()), earlyDone());
             }
@@ -310,17 +319,21 @@ public class AgentChatStreamService {
     }
 
     private ModelConfig toModelConfig(String tenantId, RoutingModelConfig routingConfig) {
-        if (routingConfig == null || routingConfig.getApiKey() == null || routingConfig.getApiKey().isBlank()) {
-            throw new IllegalArgumentException("需要模型配置（apiKey/baseUrl/modelName）才能生成回复");
+        RoutingModelConfig effective = routingConfig;
+        // 前端不再携带 API Key：未传配置时由服务端解析租户"使用中"的数据库配置
+        if (effective == null || effective.getApiKey() == null || effective.getApiKey().isBlank()) {
+            effective = modelConfigs.resolveActive(tenantId)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "当前租户尚未配置任何模型（请在「AI 模型热插拔中心」新增并启用一份配置）"));
         }
         return ModelConfig.builder()
                 .tenantId(Long.valueOf(tenantId))
                 .usageType("chat")
-                .provider(routingConfig.getProvider() != null && !routingConfig.getProvider().isBlank()
-                        ? routingConfig.getProvider() : "openai")
-                .baseUrl(routingConfig.getBaseUrl())
-                .apiKey(routingConfig.getApiKey())
-                .modelName(routingConfig.getModelName())
+                .provider(effective.getProvider() != null && !effective.getProvider().isBlank()
+                        ? effective.getProvider() : "openai")
+                .baseUrl(effective.getBaseUrl())
+                .apiKey(effective.getApiKey())
+                .modelName(effective.getModelName())
                 .build();
     }
 

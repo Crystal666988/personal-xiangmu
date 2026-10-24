@@ -7,7 +7,7 @@
             <el-icon><EditPen /></el-icon> 模型配置管理
           </span>
           <div class="title-actions">
-            <el-tag size="small" type="info" effect="plain">一份配置 = 提供商 + 端点 + 密钥 + 模型</el-tag>
+            <el-tag size="small" type="info" effect="plain">数据库存储 · 租户隔离 · 单份生效</el-tag>
             <el-button type="primary" size="default" @click="handleAdd">
               <el-icon><Plus /></el-icon> 新增配置
             </el-button>
@@ -15,8 +15,8 @@
         </div>
       </template>
 
-      <el-table :data="configList" style="width: 100%" size="default">
-        <el-table-column prop="name" label="配置名称" min-width="150" show-overflow-tooltip>
+      <el-table :data="configList" style="width: 100%" size="default" v-loading="loading">
+        <el-table-column prop="name" label="配置名称" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <span class="name-text">{{ row.name }}</span>
             <el-tag v-if="row.active" size="small" type="success" effect="dark" class="ml-2">使用中</el-tag>
@@ -31,10 +31,10 @@
           </template>
         </el-table-column>
         <el-table-column prop="modelName" label="模型名称" width="150" />
-        <el-table-column label="API Key" width="100">
+        <el-table-column label="API Key" width="140">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.apiKey ? 'success' : 'info'" effect="plain">
-              {{ row.apiKey ? '已配置' : '未配置' }}
+            <el-tag size="small" :type="row.hasApiKey ? 'success' : 'info'" effect="plain">
+              {{ row.hasApiKey ? `已配置 (${row.keyTail})` : '未配置' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -61,7 +61,8 @@
       </el-table>
 
       <div class="storage-tip">
-        所有配置仅保存在本机浏览器 localStorage；「使用中」的那份会在对话与后端流式生成时使用。API Key 不会入库、不会下发给其他用户。
+        配置保存在数据库中按租户隔离；「使用中」的那份会在对话、审批与恢复时由服务端解析使用——
+        API Key 只在保存时进入服务端，任何接口都不会把它下发回浏览器。
       </div>
     </el-card>
 
@@ -106,7 +107,7 @@
             v-model="dialogForm.apiKey"
             type="password"
             show-password
-            placeholder="sk-xxx；仅保存在本机浏览器 localStorage"
+            :placeholder="dialogMode === 'edit' ? '留空则保持原密钥不变' : 'sk-xxx；保存后仅存于服务端数据库'"
           />
         </el-form-item>
 
@@ -175,12 +176,20 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { EditPen, Odometer, Plus } from '@element-plus/icons-vue'
-import { probeModelApi } from '@/api/model'
+import {
+  probeModelApi,
+  listModelConfigsApi,
+  createModelConfigApi,
+  updateModelConfigApi,
+  deleteModelConfigApi,
+  enableModelConfigApi
+} from '@/api/model'
 
-const LIST_KEY = 'tradeagent_model_configs'
+const TENANT_ID = '1001'
 const LEGACY_KEY = 'tradeagent_model_config'
 
 const configList = ref([])
+const loading = ref(false)
 const probing = ref(false)
 const saving = ref(false)
 const dialogVisible = ref(false)
@@ -213,61 +222,43 @@ const providerLabel = (p) => ({
   custom: '本地私有化'
 }[p] || p || '--')
 
-// ---------- 存储层 ----------
-const loadList = () => {
+const fetchList = async () => {
+  loading.value = true
   try {
-    const raw = localStorage.getItem(LIST_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch (e) {
-    console.warn('Failed to parse config list', e)
-  }
-  return null
-}
-
-const persist = (list) => {
-  localStorage.setItem(LIST_KEY, JSON.stringify(list))
-  const active = list.find(c => c.active)
-  if (active) {
-    // 同步"使用中"那份到旧键，供对话页与后端 SSE 直接消费
-    localStorage.setItem(LEGACY_KEY, JSON.stringify({
-      tenantId: '1001',
-      provider: active.provider,
-      baseUrl: active.baseUrl,
-      apiKey: active.apiKey,
-      modelName: active.modelName,
-      temperature: active.temperature,
-      maxTokens: active.maxTokens
-    }))
+    const res = await listModelConfigsApi(TENANT_ID)
+    configList.value = res && res.data ? res.data : []
+  } finally {
+    loading.value = false
   }
 }
 
-onMounted(() => {
-  let list = loadList()
-  if (!list) {
-    // 迁移旧的单份配置为列表中的"使用中"条目
+onMounted(async () => {
+  await fetchList()
+  // 一次性迁移：数据库为空且浏览器里有旧的单份配置时，迁入数据库并清除本地残留
+  if (configList.value.length === 0) {
     try {
       const legacyRaw = localStorage.getItem(LEGACY_KEY)
       if (legacyRaw) {
         const legacy = JSON.parse(legacyRaw)
-        list = [{
-          id: 'cfg_' + Date.now(),
-          name: (legacy.modelName || '默认模型') + ' 配置',
-          provider: legacy.provider,
-          baseUrl: legacy.baseUrl,
-          apiKey: legacy.apiKey,
-          modelName: legacy.modelName,
-          temperature: legacy.temperature,
-          maxTokens: legacy.maxTokens,
-          active: true,
-          createTime: new Date().toLocaleString()
-        }]
-        persist(list)
+        if (legacy && legacy.baseUrl && legacy.modelName) {
+          await createModelConfigApi({
+            name: (legacy.modelName || '默认模型') + ' 配置',
+            provider: legacy.provider || 'custom',
+            baseUrl: legacy.baseUrl,
+            apiKey: legacy.apiKey || '',
+            modelName: legacy.modelName,
+            temperature: legacy.temperature,
+            maxTokens: legacy.maxTokens
+          }, TENANT_ID)
+          localStorage.removeItem(LEGACY_KEY)
+          await fetchList()
+          ElMessage.success('已将本机旧模型配置迁移到数据库（租户隔离）')
+        }
       }
     } catch (e) {
-      console.warn('Failed to migrate legacy config', e)
+      console.warn('旧配置迁移失败', e)
     }
   }
-  configList.value = list || []
 })
 
 // ---------- CRUD ----------
@@ -294,7 +285,7 @@ const handleEdit = (row) => {
     name: row.name,
     provider: row.provider,
     baseUrl: row.baseUrl,
-    apiKey: row.apiKey,
+    apiKey: '',
     modelName: row.modelName,
     temperature: row.temperature,
     maxTokens: row.maxTokens
@@ -311,79 +302,67 @@ const handleDialogSave = async () => {
   }
   saving.value = true
   try {
-    let list = configList.value.slice()
-    if (dialogMode.value === 'add') {
-      const isFirst = list.length === 0
-      list.push({
-        id: 'cfg_' + Date.now(),
-        name: dialogForm.name.trim(),
-        provider: dialogForm.provider,
-        baseUrl: dialogForm.baseUrl.trim(),
-        apiKey: dialogForm.apiKey.trim(),
-        modelName: dialogForm.modelName.trim(),
-        temperature: dialogForm.temperature,
-        maxTokens: dialogForm.maxTokens,
-        active: isFirst,
-        createTime: new Date().toLocaleString()
-      })
-    } else {
-      const idx = list.findIndex(c => c.id === editingId.value)
-      if (idx >= 0) {
-        list[idx] = { ...list[idx], ...{
-          name: dialogForm.name.trim(),
-          provider: dialogForm.provider,
-          baseUrl: dialogForm.baseUrl.trim(),
-          apiKey: dialogForm.apiKey.trim(),
-          modelName: dialogForm.modelName.trim(),
-          temperature: dialogForm.temperature,
-          maxTokens: dialogForm.maxTokens
-        } }
-      }
+    const payload = {
+      name: dialogForm.name.trim(),
+      provider: dialogForm.provider,
+      baseUrl: dialogForm.baseUrl.trim(),
+      apiKey: dialogForm.apiKey.trim(),
+      modelName: dialogForm.modelName.trim(),
+      temperature: dialogForm.temperature,
+      maxTokens: dialogForm.maxTokens
     }
-    persist(list)
-    configList.value = list
+    if (dialogMode.value === 'add') {
+      await createModelConfigApi(payload, TENANT_ID)
+      ElMessage.success('配置已新增')
+    } else {
+      await updateModelConfigApi(editingId.value, payload, TENANT_ID)
+      ElMessage.success('配置已更新')
+    }
     dialogVisible.value = false
-    ElMessage.success(dialogMode.value === 'add' ? '配置已新增' : '配置已更新')
+    await fetchList()
+  } catch (err) {
+    ElMessage.error('保存失败: ' + (err.message || '未知异常'))
   } finally {
     saving.value = false
   }
 }
 
-const handleEnable = (row) => {
-  const list = configList.value.map(c => ({ ...c, active: c.id === row.id }))
-  persist(list)
-  configList.value = list
+const handleEnable = async (row) => {
+  await enableModelConfigApi(row.id, TENANT_ID)
+  await fetchList()
   ElMessage.success(`已切换生效配置：${row.name}`)
 }
 
-const handleDelete = (row) => {
-  ElMessageBox.confirm(
-    `确定删除配置「${row.name}」吗？${row.active ? '它当前处于使用中，删除后对话将回退到未配置状态。' : ''}`,
-    '删除确认',
-    { type: 'warning', confirmButtonText: '删 除', cancelButtonText: '取 消' }
-  ).then(() => {
-    let list = configList.value.filter(c => c.id !== row.id)
-    if (row.active) {
-      // 删除使用中的配置：同步清掉旧键，对话页自动回退到未配置状态
-      localStorage.removeItem(LEGACY_KEY)
-    }
-    localStorage.setItem(LIST_KEY, JSON.stringify(list))
-    configList.value = list
-    ElMessage.success('配置已删除')
-  }).catch(() => {})
+const handleDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除配置「${row.name}」吗？${row.active ? '它当前处于使用中，删除后对话将回退到未配置状态。' : ''}`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删 除', cancelButtonText: '取 消' }
+    )
+  } catch (e) {
+    return
+  }
+  await deleteModelConfigApi(row.id, TENANT_ID)
+  await fetchList()
+  ElMessage.success('配置已删除')
 }
 
 // ---------- 探针与提供商 ----------
 const handleProbe = async () => {
   if (!dialogForm.apiKey || !dialogForm.apiKey.trim()) {
-    ElMessage.warning('请先填写 API Key 再发起连通性测试')
+    if (dialogMode.value === 'edit') {
+      ElMessage.info('编辑模式留空密钥表示沿用原密钥，请先填写密钥后再测试')
+    } else {
+      ElMessage.warning('请先填写 API Key 再发起连通性测试')
+    }
     return
   }
   probing.value = true
   probeResult.value = null
   try {
     const res = await probeModelApi({
-      tenantId: '1001',
+      tenantId: TENANT_ID,
       modelName: dialogForm.modelName,
       baseUrl: dialogForm.baseUrl,
       apiKey: dialogForm.apiKey,

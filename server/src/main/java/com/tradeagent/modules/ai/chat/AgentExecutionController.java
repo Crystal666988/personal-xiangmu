@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import java.util.*;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
+import com.tradeagent.modules.ai.modelconfig.TenantModelConfigService;
 
 /** Same tenant/session ownership boundary as AgentContextController. Replace tenantId with auth principal when auth lands. */
 @RestController
@@ -20,15 +21,22 @@ public class AgentExecutionController {
     private final ExecutionCheckpointService checkpoints;
     private final CheckpointedDagExecutor executor;
     private final HitlApprovalService approvals;
+    private final TenantModelConfigService modelConfigs;
     public AgentExecutionController(AgentSessionMapper sessions, AgentSessionService messages, ExecutionCheckpointService checkpoints,
-                                    CheckpointedDagExecutor executor, HitlApprovalService approvals) {
-        this.sessions = sessions; this.messages = messages; this.checkpoints = checkpoints; this.executor = executor; this.approvals = approvals;
+                                    CheckpointedDagExecutor executor, HitlApprovalService approvals, TenantModelConfigService modelConfigs) {
+        this.sessions = sessions; this.messages = messages; this.checkpoints = checkpoints;
+        this.executor = executor; this.approvals = approvals; this.modelConfigs = modelConfigs;
     }
     public record DecisionRequest(@NotBlank String tenantId, @NotBlank String sessionId, @NotBlank String taskId,
                                   @NotNull HitlApprovalService.Action action, @Size(max = 32) Map<String, Object> overrideParams,
                                   RoutingModelConfig modelConfig) {}
     public record ResumeRequest(@NotBlank String tenantId, @NotBlank String sessionId,
                                 @Size(max = 32) Map<String, Object> injectedSlots, RoutingModelConfig modelConfig) {}
+
+    /** 前端不再携带 API Key：未传配置时由服务端解析租户"使用中"的数据库配置。 */
+    private RoutingModelConfig resolve(String tenantId, RoutingModelConfig config) {
+        return config != null ? config : modelConfigs.resolveActive(tenantId).orElse(null);
+    }
 
     @PostMapping("/hitl/{approvalId}/decision")
     public ApiResponse<CheckpointedDagExecutor.View> decide(@PathVariable("approvalId") String approvalId,
@@ -39,7 +47,7 @@ public class AgentExecutionController {
         // Rejection always remains possible even if the source message has been deleted.
         if (request.action() != HitlApprovalService.Action.REJECT) requireSources(cp);
         return ApiResponse.success(approvals.decide(request.tenantId(), request.sessionId(), request.taskId(), approvalId,
-                request.action(), request.overrideParams(), request.modelConfig()));
+                request.action(), request.overrideParams(), resolve(request.tenantId(), request.modelConfig())));
     }
     @GetMapping("/sessions/{sessionId}/execution")
     public ApiResponse<CheckpointedDagExecutor.View> active(@PathVariable("sessionId") String session, @RequestParam("tenantId") String tenant) {
@@ -59,7 +67,8 @@ public class AgentExecutionController {
         var cp = checkpoints.byId(request.tenantId(), request.sessionId(), checkpointId);
         if (!Set.of("COMPENSATION_REQUIRED", "COMPENSATING", "COMPENSATION_FAILED", "REJECTED").contains(cp.getState().getStatus().name()))
             requireSources(cp);
-        return ApiResponse.success(checkpoints.resumeExecution(request.tenantId(), request.sessionId(), checkpointId, request.injectedSlots(), request.modelConfig()));
+        return ApiResponse.success(checkpoints.resumeExecution(request.tenantId(), request.sessionId(), checkpointId, request.injectedSlots(),
+                resolve(request.tenantId(), request.modelConfig())));
     }
     @PostMapping("/checkpoints/{checkpointId}/cancel")
     public ApiResponse<CheckpointedDagExecutor.View> cancel(@PathVariable("checkpointId") String checkpointId,
