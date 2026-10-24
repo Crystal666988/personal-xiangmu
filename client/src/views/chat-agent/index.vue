@@ -14,26 +14,6 @@
             </el-button>
           </div>
 
-          <!-- 场景 Agent 预设选择 -->
-          <div class="agent-role-section">
-            <div class="section-label">业务场景专属 Agent:</div>
-            <div
-              v-for="agent in agentPresets"
-              :key="agent.id"
-              class="agent-preset-item"
-              :class="{ active: currentAgent.id === agent.id }"
-              @click="switchAgentPreset(agent)"
-            >
-              <div class="agent-avatar" :style="{ backgroundColor: agent.bgColor }">
-                <el-icon :size="16"><component :is="agent.icon" /></el-icon>
-              </div>
-              <div class="agent-info">
-                <div class="agent-name">{{ agent.name }}</div>
-                <div class="agent-desc">{{ agent.description }}</div>
-              </div>
-            </div>
-          </div>
-
           <!-- 历史会话列表 (MySQL 数据库级持久化) -->
           <div class="session-list-section">
             <div class="section-header-row">
@@ -88,8 +68,8 @@
           <template #header>
             <div class="chat-header">
               <div class="chat-header-left">
-                <span class="active-agent-badge" :style="{ color: currentAgent.bgColor }">
-                  <el-icon><component :is="currentAgent.icon" /></el-icon>
+                <span class="active-agent-badge" style="color: #409eff">
+                  <el-icon><Connection /></el-icon>
                 </span>
                 <span class="chat-title">{{ currentSessionTitle }}</span>
                 <el-tag size="small" type="success" effect="plain" class="header-status-tag">
@@ -130,16 +110,16 @@
                 <el-avatar
                   v-else
                   :size="36"
-                  :style="{ backgroundColor: currentAgent.bgColor }"
+                  style="background-color: #409eff"
                 >
-                  <el-icon :size="20"><component :is="currentAgent.icon" /></el-icon>
+                  <el-icon :size="20"><Connection /></el-icon>
                 </el-avatar>
               </div>
 
               <!-- 气泡内容 -->
               <div class="msg-bubble-wrap">
                 <div class="msg-meta">
-                  <span class="sender-name">{{ msg.role === 'user' ? '我 (业务员)' : currentAgent.name }}</span>
+                  <span class="sender-name">{{ msg.role === 'user' ? '我 (业务员)' : 'TradeAgent 智能体' }}</span>
                   <span class="msg-time">{{ msg.time }}</span>
                   <el-tooltip :content="msg.role === 'user' ? '删除此轮对话 (连同对应回答一并从数据库清除，彻底净化上下文)' : '删除本条回答 (从数据库清除)'" placement="top">
                     <el-button
@@ -814,33 +794,6 @@ const renderMessageContent = (content) => {
   }
 }
 
-// 场景预设 Agent
-const agentPresets = [
-  {
-    id: 'commerce-agent',
-    name: '外贸商贸与报价专家',
-    description: '精通阶梯价格核算、CIF/FOB 海运费核算与 PI 结单',
-    icon: 'Money',
-    bgColor: '#67c23a'
-  },
-  {
-    id: 'knowledge-agent',
-    name: '工业图纸与规格问答',
-    description: '深度解析 CE/UL/TUV 认证标准与光伏组件衰减曲线',
-    icon: 'Document',
-    bgColor: '#409eff'
-  },
-  {
-    id: 'prospect-agent',
-    name: '海外采购商背调助手',
-    description: '自动关联海关提单频次、企业官网抓取与地图反查',
-    icon: 'Search',
-    bgColor: '#e6a23c'
-  }
-]
-
-const currentAgent = ref(agentPresets[0])
-
 // 多会话管理 (MySQL 数据库级持久化)
 const sessions = ref([])
 const currentSessionId = ref('')
@@ -1245,12 +1198,6 @@ const scrollToBottom = () => {
   })
 }
 
-// 切换 Agent 预设
-const switchAgentPreset = (agent) => {
-  currentAgent.value = agent
-  ElMessage.success(`已切换为：${agent.name}`)
-}
-
 // 新建会话 (向 MySQL 数据库插入)
 const createNewSession = async () => {
   const newId = 'session_' + Date.now()
@@ -1258,7 +1205,7 @@ const createNewSession = async () => {
     id: newId,
     tenantId: '1001',
     title: '新会话',
-    agentId: currentAgent.value.id
+    agentId: 'commerce-agent'
   }
   try {
     await createSessionApi(payload)
@@ -2234,64 +2181,6 @@ onMounted(() => {
       display: flex;
       align-items: center;
       gap: 6px;
-    }
-  }
-
-  .agent-role-section {
-    border-bottom: 1px solid #f2f6fc;
-    padding-bottom: 8px;
-
-    .section-label {
-      padding: 10px 16px 6px;
-      font-size: 12px;
-      color: #909399;
-    }
-
-    .agent-preset-item {
-      padding: 8px 16px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      cursor: pointer;
-      transition: background-color 0.2s;
-
-      &:hover {
-        background-color: #f5f7fa;
-      }
-
-      &.active {
-        background-color: #ecf5ff;
-        border-right: 3px solid #409eff;
-      }
-
-      .agent-avatar {
-        width: 30px;
-        height: 30px;
-        border-radius: 6px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #ffffff;
-      }
-
-      .agent-info {
-        flex: 1;
-        overflow: hidden;
-
-        .agent-name {
-          font-size: 13px;
-          font-weight: 500;
-          color: #303133;
-        }
-
-        .agent-desc {
-          font-size: 11px;
-          color: #909399;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-      }
     }
   }
 
