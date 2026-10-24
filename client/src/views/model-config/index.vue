@@ -1,63 +1,91 @@
 <template>
   <div class="model-config-container">
-    <!-- 顶部状态卡（全部来自真实数据：本地保存的配置 + 真实探针结果） -->
-    <el-row :gutter="16" class="metrics-row">
-      <el-col :xs="24" :sm="12" :md="12">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">当前保存的模型配置</span>
-            <el-tag size="small" :type="hasSavedConfig ? 'success' : 'info'" effect="dark">
-              {{ hasSavedConfig ? '已生效' : '未保存' }}
-            </el-tag>
-          </div>
-          <div class="metric-value">{{ modelConfigForm.modelName || '--' }}</div>
-          <div class="metric-footer">
-            <span class="label">接入端点:</span>
-            <span class="value font-mono text-truncate">{{ modelConfigForm.baseUrl || '--' }}</span>
-          </div>
-        </el-card>
-      </el-col>
-
-      <el-col :xs="24" :sm="12" :md="12">
-        <el-card shadow="hover" class="metric-card">
-          <div class="metric-header">
-            <span class="metric-title">连接探针延迟 (1-Token 真实握手)</span>
-            <el-tag size="small" :type="probeData.status === 'HEALTHY' ? 'success' : probeData.status === 'FAILED' ? 'danger' : 'info'" effect="plain">
-              {{ probeData.status === 'HEALTHY' ? '健康' : probeData.status === 'FAILED' ? '失败' : '待探测' }}
-            </el-tag>
-          </div>
-          <div class="metric-value" :class="probeData.status === 'HEALTHY' ? 'text-success' : ''">
-            {{ probeData.latencyMs ? probeData.latencyMs + ' ms' : '--' }}
-          </div>
-          <div class="metric-footer">
-            <span class="label">最近探测:</span>
-            <span class="value">{{ probeData.rateDate || '尚未探测' }}</span>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 主面板：模型参数与 API Key 配置（标准管理系统式手动保存） -->
     <el-card shadow="never" class="box-card">
       <template #header>
         <div class="card-title-bar">
           <span class="title-text">
-            <el-icon><EditPen /></el-icon> 模型参数与 API Key 配置
+            <el-icon><EditPen /></el-icon> 模型配置管理
           </span>
-          <el-tag size="small" type="info" effect="plain">保存后对话即时使用</el-tag>
+          <div class="title-actions">
+            <el-tag size="small" type="info" effect="plain">一份配置 = 提供商 + 端点 + 密钥 + 模型</el-tag>
+            <el-button type="primary" size="default" @click="handleAdd">
+              <el-icon><Plus /></el-icon> 新增配置
+            </el-button>
+          </div>
         </div>
       </template>
 
+      <el-table :data="configList" style="width: 100%" size="default">
+        <el-table-column prop="name" label="配置名称" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="name-text">{{ row.name }}</span>
+            <el-tag v-if="row.active" size="small" type="success" effect="dark" class="ml-2">使用中</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="provider" label="提供商" width="150">
+          <template #default="{ row }">{{ providerLabel(row.provider) }}</template>
+        </el-table-column>
+        <el-table-column prop="baseUrl" label="接入 BaseURL" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="font-mono">{{ row.baseUrl }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="modelName" label="模型名称" width="150" />
+        <el-table-column label="API Key" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.apiKey ? 'success' : 'info'" effect="plain">
+              {{ row.apiKey ? '已配置' : '未配置' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="temperature" label="温度" width="70" />
+        <el-table-column prop="maxTokens" label="MaxToken" width="90" />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="!row.active"
+              size="small"
+              type="success"
+              link
+              @click="handleEnable(row)"
+            >
+              启用
+            </el-button>
+            <el-button size="small" type="primary" link @click="handleEdit(row)">编辑</el-button>
+            <el-button size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="还没有模型配置，点击右上角「新增配置」创建第一份" />
+        </template>
+      </el-table>
+
+      <div class="storage-tip">
+        所有配置仅保存在本机浏览器 localStorage；「使用中」的那份会在对话与后端流式生成时使用。API Key 不会入库、不会下发给其他用户。
+      </div>
+    </el-card>
+
+    <!-- 新增 / 编辑对话框 -->
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogMode === 'add' ? '新增模型配置' : '编辑模型配置'"
+      width="640px"
+      destroy-on-close
+    >
       <el-form
-        ref="modelFormRef"
-        :model="modelConfigForm"
+        ref="dialogFormRef"
+        :model="dialogForm"
+        :rules="dialogRules"
         label-width="130px"
         size="default"
-        class="config-form"
       >
-        <el-form-item label="模型提供商">
+        <el-form-item label="配置名称" prop="name">
+          <el-input v-model="dialogForm.name" placeholder="例如: 通义千问-生产 / DeepSeek-备用" maxlength="40" />
+        </el-form-item>
+
+        <el-form-item label="模型提供商" prop="provider">
           <el-select
-            v-model="modelConfigForm.provider"
+            v-model="dialogForm.provider"
             placeholder="请选择模型提供商"
             style="width: 100%"
             @change="handleProviderChange"
@@ -69,42 +97,35 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="接入 BaseURL">
-          <el-input
-            v-model="modelConfigForm.baseUrl"
-            placeholder="例如: https://api.deepseek.com/v1"
-            clearable
-          />
+        <el-form-item label="接入 BaseURL" prop="baseUrl">
+          <el-input v-model="dialogForm.baseUrl" placeholder="例如: https://api.deepseek.com/v1" clearable />
         </el-form-item>
 
-        <el-form-item label="API Key 密钥">
+        <el-form-item label="API Key 密钥" prop="apiKey">
           <el-input
-            v-model="modelConfigForm.apiKey"
+            v-model="dialogForm.apiKey"
             type="password"
             show-password
-            placeholder="请输入您自己的 API 密钥 (sk-xxx，仅保存在本机浏览器)"
+            placeholder="sk-xxx；仅保存在本机浏览器 localStorage"
           />
-          <div class="form-tip">
-            密钥只保存在本机浏览器 localStorage，随请求传给后端创建本次对话模型；不会入库，也不会下发给其他用户。
-          </div>
         </el-form-item>
 
-        <el-form-item label="具体模型名称">
+        <el-form-item label="具体模型名称" prop="modelName">
           <el-select
-            v-model="modelConfigForm.modelName"
+            v-model="dialogForm.modelName"
             filterable
             allow-create
             default-first-option
             placeholder="请选择或输入模型名称"
             style="width: 100%"
           >
-            <el-option-group v-if="modelConfigForm.provider === 'aliyun'" label="阿里云通义千问">
+            <el-option-group v-if="dialogForm.provider === 'aliyun'" label="阿里云通义千问">
               <el-option label="qwen-plus (文本旗舰)" value="qwen-plus" />
               <el-option label="qwen-max (深度推理旗舰)" value="qwen-max" />
               <el-option label="qwen3-vl-plus (全模态视觉)" value="qwen3-vl-plus" />
               <el-option label="qwen-vl-ocr (高精度单据 OCR)" value="qwen-vl-ocr" />
             </el-option-group>
-            <el-option-group v-else-if="modelConfigForm.provider === 'deepseek'" label="DeepSeek 官方模型">
+            <el-option-group v-else-if="dialogForm.provider === 'deepseek'" label="DeepSeek 官方模型">
               <el-option label="deepseek-chat (V3 纯文本旗舰)" value="deepseek-chat" />
               <el-option label="deepseek-reasoner (R1 深度思考链)" value="deepseek-reasoner" />
             </el-option-group>
@@ -117,90 +138,59 @@
 
         <el-form-item label="温度参数 (Temp)">
           <div class="slider-block">
-            <el-slider
-              v-model="modelConfigForm.temperature"
-              :min="0.0"
-              :max="2.0"
-              :step="0.1"
-              show-input
-            />
+            <el-slider v-model="dialogForm.temperature" :min="0.0" :max="2.0" :step="0.1" show-input />
           </div>
         </el-form-item>
 
         <el-form-item label="最大输出 Token">
           <div class="slider-block">
-            <el-slider
-              v-model="modelConfigForm.maxTokens"
-              :min="1024"
-              :max="8192"
-              :step="512"
-              show-input
-            />
+            <el-slider v-model="dialogForm.maxTokens" :min="1024" :max="8192" :step="512" show-input />
           </div>
         </el-form-item>
 
-        <!-- 连接探针：真实 1-Token 测试，只展示真实返回 -->
-        <el-form-item label="连接探针">
-          <el-button
-            type="primary"
-            plain
-            :loading="probing"
-            @click="runConnectivityProbe"
-          >
+        <el-form-item label="连通性测试">
+          <el-button plain :loading="probing" @click="handleProbe">
             <el-icon><Odometer /></el-icon> 测试连通性 (1-Token 真实请求)
           </el-button>
-          <div v-if="probeData.status !== 'READY' || probeData.error" class="probe-result font-mono">
+          <div v-if="probeResult" class="probe-result font-mono">
             <p>
               状态:
-              <span :class="probeData.status === 'HEALTHY' ? 'ok' : probeData.status === 'FAILED' ? 'bad' : ''">
-                {{ probeData.status }}
-              </span>
-              <template v-if="probeData.latencyMs">｜延迟: {{ probeData.latencyMs }} ms</template>
+              <span :class="probeResult.ok ? 'ok' : 'bad'">{{ probeResult.ok ? 'HEALTHY' : 'FAILED' }}</span>
+              <template v-if="probeResult.ok">｜延迟: {{ probeResult.latencyMs }} ms</template>
             </p>
-            <p v-if="probeData.error" class="bad">错误: {{ probeData.error }}</p>
+            <p v-if="probeResult.error" class="bad">错误: {{ probeResult.error }}</p>
           </div>
         </el-form-item>
-
-        <el-form-item>
-          <el-button
-            type="primary"
-            size="large"
-            :loading="saving"
-            @click="handleSaveModelConfig"
-          >
-            保存并生效
-          </el-button>
-          <el-button size="large" @click="resetForm">重 置</el-button>
-        </el-form-item>
       </el-form>
-    </el-card>
+
+      <template #footer>
+        <el-button @click="dialogVisible = false">取 消</el-button>
+        <el-button type="primary" :loading="saving" @click="handleDialogSave">保 存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage, ElNotification } from 'element-plus'
-import {
-  Odometer,
-  EditPen
-} from '@element-plus/icons-vue'
-import {
-  probeModelApi,
-  saveModelConfigApi
-} from '@/api/model'
+import { ref, reactive, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { EditPen, Odometer, Plus } from '@element-plus/icons-vue'
+import { probeModelApi } from '@/api/model'
 
+const LIST_KEY = 'tradeagent_model_configs'
+const LEGACY_KEY = 'tradeagent_model_config'
+
+const configList = ref([])
 const probing = ref(false)
 const saving = ref(false)
-const hasSavedConfig = ref(false)
+const dialogVisible = ref(false)
+const dialogMode = ref('add')
+const editingId = ref(null)
+const probeResult = ref(null)
 
-const probeData = reactive({
-  status: 'READY',
-  latencyMs: null,
-  error: '',
-  rateDate: ''
-})
-
-const modelConfigForm = reactive({
+const dialogFormRef = ref(null)
+const dialogForm = reactive({
+  name: '',
   provider: 'deepseek',
   baseUrl: 'https://api.deepseek.com/v1',
   apiKey: '',
@@ -209,98 +199,221 @@ const modelConfigForm = reactive({
   maxTokens: 4096
 })
 
+const dialogRules = {
+  name: [{ required: true, message: '请输入配置名称', trigger: 'blur' }],
+  provider: [{ required: true, message: '请选择提供商', trigger: 'change' }],
+  baseUrl: [{ required: true, message: '请输入接入 BaseURL', trigger: 'blur' }],
+  modelName: [{ required: true, message: '请选择或输入模型名称', trigger: 'change' }]
+}
+
+const providerLabel = (p) => ({
+  deepseek: 'DeepSeek',
+  aliyun: '阿里云 DashScope',
+  openai: 'OpenAI',
+  custom: '本地私有化'
+}[p] || p || '--')
+
+// ---------- 存储层 ----------
+const loadList = () => {
+  try {
+    const raw = localStorage.getItem(LIST_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch (e) {
+    console.warn('Failed to parse config list', e)
+  }
+  return null
+}
+
+const persist = (list) => {
+  localStorage.setItem(LIST_KEY, JSON.stringify(list))
+  const active = list.find(c => c.active)
+  if (active) {
+    // 同步"使用中"那份到旧键，供对话页与后端 SSE 直接消费
+    localStorage.setItem(LEGACY_KEY, JSON.stringify({
+      tenantId: '1001',
+      provider: active.provider,
+      baseUrl: active.baseUrl,
+      apiKey: active.apiKey,
+      modelName: active.modelName,
+      temperature: active.temperature,
+      maxTokens: active.maxTokens
+    }))
+  }
+}
+
 onMounted(() => {
-  const savedConfig = localStorage.getItem('tradeagent_model_config')
-  if (savedConfig) {
+  let list = loadList()
+  if (!list) {
+    // 迁移旧的单份配置为列表中的"使用中"条目
     try {
-      const parsed = JSON.parse(savedConfig)
-      Object.assign(modelConfigForm, parsed)
-      hasSavedConfig.value = Boolean(parsed.apiKey)
+      const legacyRaw = localStorage.getItem(LEGACY_KEY)
+      if (legacyRaw) {
+        const legacy = JSON.parse(legacyRaw)
+        list = [{
+          id: 'cfg_' + Date.now(),
+          name: (legacy.modelName || '默认模型') + ' 配置',
+          provider: legacy.provider,
+          baseUrl: legacy.baseUrl,
+          apiKey: legacy.apiKey,
+          modelName: legacy.modelName,
+          temperature: legacy.temperature,
+          maxTokens: legacy.maxTokens,
+          active: true,
+          createTime: new Date().toLocaleString()
+        }]
+        persist(list)
+      }
     } catch (e) {
-      console.warn('Failed to parse saved model config', e)
+      console.warn('Failed to migrate legacy config', e)
     }
   }
+  configList.value = list || []
 })
 
-// 真实 1-Token 连通性探针（后端真实调用一次模型端点；只展示后端真实返回）
-const runConnectivityProbe = async () => {
-  if (!modelConfigForm.apiKey || !modelConfigForm.apiKey.trim()) {
-    ElMessage.warning('请先填写 API Key 再发起连通性测试')
+// ---------- CRUD ----------
+const handleAdd = () => {
+  dialogMode.value = 'add'
+  editingId.value = null
+  Object.assign(dialogForm, {
+    name: '',
+    provider: 'deepseek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: '',
+    modelName: 'deepseek-chat',
+    temperature: 0.7,
+    maxTokens: 4096
+  })
+  probeResult.value = null
+  dialogVisible.value = true
+}
+
+const handleEdit = (row) => {
+  dialogMode.value = 'edit'
+  editingId.value = row.id
+  Object.assign(dialogForm, {
+    name: row.name,
+    provider: row.provider,
+    baseUrl: row.baseUrl,
+    apiKey: row.apiKey,
+    modelName: row.modelName,
+    temperature: row.temperature,
+    maxTokens: row.maxTokens
+  })
+  probeResult.value = null
+  dialogVisible.value = true
+}
+
+const handleDialogSave = async () => {
+  try {
+    await dialogFormRef.value.validate()
+  } catch (e) {
     return
   }
-
-  probing.value = true
-  probeData.status = 'PROBING'
-  probeData.error = ''
-  probeData.latencyMs = null
-  probeData.rateDate = ''
-
-  try {
-    const res = await probeModelApi({
-      tenantId: '1001',
-      modelName: modelConfigForm.modelName,
-      baseUrl: modelConfigForm.baseUrl,
-      apiKey: modelConfigForm.apiKey,
-      provider: modelConfigForm.provider
-    })
-
-    if (res.data) {
-      probeData.status = 'HEALTHY'
-      probeData.latencyMs = res.data.latencyMs
-      probeData.rateDate = new Date().toLocaleTimeString()
-      ElMessage.success(`连通性正常，真实往返延迟 ${res.data.latencyMs}ms`)
-    }
-  } catch (err) {
-    probeData.status = 'FAILED'
-    probeData.latencyMs = null
-    probeData.error = err.message || '端点响应异常'
-  } finally {
-    probing.value = false
-  }
-}
-
-// 提供商变动快捷更新 BaseURL
-const handleProviderChange = (val) => {
-  if (val === 'deepseek') {
-    modelConfigForm.baseUrl = 'https://api.deepseek.com/v1'
-    modelConfigForm.modelName = 'deepseek-chat'
-  } else if (val === 'aliyun') {
-    modelConfigForm.baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-    modelConfigForm.modelName = 'qwen-plus'
-  } else if (val === 'openai') {
-    modelConfigForm.baseUrl = 'https://api.openai.com/v1'
-    modelConfigForm.modelName = 'gpt-4o'
-  } else {
-    modelConfigForm.baseUrl = 'http://127.0.0.1:11434/v1'
-    modelConfigForm.modelName = 'qwen2.5:7b'
-  }
-}
-
-// 保存配置：本地持久化（对话页与后端 SSE 均以这份配置为准）
-const handleSaveModelConfig = async () => {
   saving.value = true
-  const payload = {
-    tenantId: '1001',
-    ...modelConfigForm
-  }
-  localStorage.setItem('tradeagent_model_config', JSON.stringify(payload))
-  hasSavedConfig.value = Boolean(payload.apiKey)
-
   try {
-    await saveModelConfigApi(payload)
-    ElMessage.success('模型配置已保存并生效')
-  } catch (err) {
-    ElMessage.success('模型配置已在本机保存并生效')
+    let list = configList.value.slice()
+    if (dialogMode.value === 'add') {
+      const isFirst = list.length === 0
+      list.push({
+        id: 'cfg_' + Date.now(),
+        name: dialogForm.name.trim(),
+        provider: dialogForm.provider,
+        baseUrl: dialogForm.baseUrl.trim(),
+        apiKey: dialogForm.apiKey.trim(),
+        modelName: dialogForm.modelName.trim(),
+        temperature: dialogForm.temperature,
+        maxTokens: dialogForm.maxTokens,
+        active: isFirst,
+        createTime: new Date().toLocaleString()
+      })
+    } else {
+      const idx = list.findIndex(c => c.id === editingId.value)
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...{
+          name: dialogForm.name.trim(),
+          provider: dialogForm.provider,
+          baseUrl: dialogForm.baseUrl.trim(),
+          apiKey: dialogForm.apiKey.trim(),
+          modelName: dialogForm.modelName.trim(),
+          temperature: dialogForm.temperature,
+          maxTokens: dialogForm.maxTokens
+        } }
+      }
+    }
+    persist(list)
+    configList.value = list
+    dialogVisible.value = false
+    ElMessage.success(dialogMode.value === 'add' ? '配置已新增' : '配置已更新')
   } finally {
     saving.value = false
   }
 }
 
-const resetForm = () => {
-  handleProviderChange(modelConfigForm.provider)
-  modelConfigForm.temperature = 0.7
-  modelConfigForm.maxTokens = 4096
-  ElMessage.info('已恢复该提供商的默认参数')
+const handleEnable = (row) => {
+  const list = configList.value.map(c => ({ ...c, active: c.id === row.id }))
+  persist(list)
+  configList.value = list
+  ElMessage.success(`已切换生效配置：${row.name}`)
+}
+
+const handleDelete = (row) => {
+  ElMessageBox.confirm(
+    `确定删除配置「${row.name}」吗？${row.active ? '它当前处于使用中，删除后对话将回退到未配置状态。' : ''}`,
+    '删除确认',
+    { type: 'warning', confirmButtonText: '删 除', cancelButtonText: '取 消' }
+  ).then(() => {
+    let list = configList.value.filter(c => c.id !== row.id)
+    if (row.active) {
+      // 删除使用中的配置：同步清掉旧键，对话页自动回退到未配置状态
+      localStorage.removeItem(LEGACY_KEY)
+    }
+    localStorage.setItem(LIST_KEY, JSON.stringify(list))
+    configList.value = list
+    ElMessage.success('配置已删除')
+  }).catch(() => {})
+}
+
+// ---------- 探针与提供商 ----------
+const handleProbe = async () => {
+  if (!dialogForm.apiKey || !dialogForm.apiKey.trim()) {
+    ElMessage.warning('请先填写 API Key 再发起连通性测试')
+    return
+  }
+  probing.value = true
+  probeResult.value = null
+  try {
+    const res = await probeModelApi({
+      tenantId: '1001',
+      modelName: dialogForm.modelName,
+      baseUrl: dialogForm.baseUrl,
+      apiKey: dialogForm.apiKey,
+      provider: dialogForm.provider
+    })
+    if (res.data) {
+      probeResult.value = { ok: true, latencyMs: res.data.latencyMs }
+      ElMessage.success(`连通性正常，真实往返延迟 ${res.data.latencyMs}ms`)
+    }
+  } catch (err) {
+    probeResult.value = { ok: false, error: err.message || '端点响应异常' }
+  } finally {
+    probing.value = false
+  }
+}
+
+const handleProviderChange = (val) => {
+  if (val === 'deepseek') {
+    dialogForm.baseUrl = 'https://api.deepseek.com/v1'
+    dialogForm.modelName = 'deepseek-chat'
+  } else if (val === 'aliyun') {
+    dialogForm.baseUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    dialogForm.modelName = 'qwen-plus'
+  } else if (val === 'openai') {
+    dialogForm.baseUrl = 'https://api.openai.com/v1'
+    dialogForm.modelName = 'gpt-4o'
+  } else {
+    dialogForm.baseUrl = 'http://127.0.0.1:11434/v1'
+    dialogForm.modelName = 'qwen2.5:7b'
+  }
 }
 </script>
 
@@ -309,56 +422,6 @@ const resetForm = () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.metrics-row {
-  margin-bottom: 2px;
-
-  .metric-card {
-    border-radius: 6px;
-    border: 1px solid #e4e7ed;
-
-    .metric-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-
-      .metric-title {
-        font-size: 13px;
-        color: #909399;
-      }
-    }
-
-    .metric-value {
-      font-size: 22px;
-      font-weight: 700;
-      color: #303133;
-      margin-bottom: 10px;
-
-      &.text-success { color: #67c23a; }
-    }
-
-    .metric-footer {
-      font-size: 12px;
-      color: #909399;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      overflow: hidden;
-
-      .value {
-        color: #606266;
-      }
-
-      .text-truncate {
-        max-width: 380px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-    }
-  }
 }
 
 .box-card {
@@ -379,19 +442,29 @@ const resetForm = () => {
       align-items: center;
       gap: 6px;
     }
+
+    .title-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
   }
 }
 
-.config-form {
-  max-width: 860px;
+.name-text {
+  font-weight: 600;
+  color: #303133;
 }
 
-.form-tip {
+.ml-2 {
+  margin-left: 6px;
+}
+
+.storage-tip {
+  margin-top: 12px;
   font-size: 12px;
   color: #909399;
   line-height: 1.6;
-  margin-top: 4px;
-  width: 100%;
 }
 
 .probe-result {
@@ -403,10 +476,7 @@ const resetForm = () => {
   padding: 10px 12px;
   font-size: 12.5px;
 
-  p {
-    margin: 2px 0;
-  }
-
+  p { margin: 2px 0; }
   .ok { color: #67c23a; font-weight: 600; }
   .bad { color: #e06c75; font-weight: 600; }
 }
