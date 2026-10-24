@@ -22,16 +22,14 @@ import java.util.List;
 public class IotIngestService {
 
     private final IotDeviceDataMapper dataMapper;
-    private final IotDeviceMapper deviceMapper;
     private final IotAnomalyEventMapper anomalyMapper;
     private final IotThresholdRuleEngine ruleEngine;
     private final IotFeishuAlertService alertService;
 
-    public IotIngestService(IotDeviceDataMapper dataMapper, IotDeviceMapper deviceMapper,
+    public IotIngestService(IotDeviceDataMapper dataMapper,
                             IotAnomalyEventMapper anomalyMapper, IotThresholdRuleEngine ruleEngine,
                             IotFeishuAlertService alertService) {
         this.dataMapper = dataMapper;
-        this.deviceMapper = deviceMapper;
         this.anomalyMapper = anomalyMapper;
         this.ruleEngine = ruleEngine;
         this.alertService = alertService;
@@ -54,8 +52,6 @@ public class IotIngestService {
         LocalDateTime collectedAt = request.collectedAt() != null
                 ? LocalDateTime.parse(request.collectedAt().replace(' ', 'T'))
                 : LocalDateTime.now();
-
-        upsertDevice(request, collectedAt);
 
         // 数据中断检测：与该设备上次上报间隔超阈值 → 掉线异常
         LocalDateTime lastSeen = lastSeenBefore(request.deviceId(), collectedAt);
@@ -86,8 +82,6 @@ public class IotIngestService {
                             .feishuState("PENDING").createTime(LocalDateTime.now())
                             .build()));
         }
-        deviceMapper.updateById(IotDevice.builder()
-                .deviceId(request.deviceId()).lastSeen(collectedAt).build());
 
         // 异常落库 + 飞书人工预警（一次上报合并一张卡片；预警后回写数据库状态）
         if (!anomalies.isEmpty()) {
@@ -107,16 +101,6 @@ public class IotIngestService {
                 anomalies.isEmpty() ? new IotFeishuAlertService.AlertResult(
                         IotFeishuAlertService.AlertState.SENT, "无异常，无需预警")
                 : null);
-    }
-
-    private void upsertDevice(IngestRequest request, LocalDateTime collectedAt) {
-        if (deviceMapper.selectById(request.deviceId()) == null) {
-            deviceMapper.insert(IotDevice.builder()
-                    .deviceId(request.deviceId()).tenantId(request.tenantId()).farmId(request.farmId())
-                    .name(request.deviceId()).type("ENV").lastSeen(collectedAt)
-                    .createTime(LocalDateTime.now())
-                    .build());
-        }
     }
 
     private LocalDateTime lastSeenBefore(String deviceId, LocalDateTime before) {

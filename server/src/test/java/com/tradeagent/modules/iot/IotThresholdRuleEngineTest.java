@@ -61,14 +61,12 @@ class IotThresholdRuleEngineTest {
     @DisplayName("入库链路：越界指标生成异常事件并落库（内存 Mapper 桩，预警状态回写）")
     void ingestGeneratesAnomaliesAndPersistsThem() {
         IotDeviceDataMapper dataMapper = Mockito.mock(IotDeviceDataMapper.class);
-        IotDeviceMapper deviceMapper = Mockito.mock(IotDeviceMapper.class);
         IotAnomalyEventMapper anomalyMapper = Mockito.mock(IotAnomalyEventMapper.class);
         IotFeishuAlertService alertService = new IotFeishuAlertService();
 
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(null);
-        Mockito.when(deviceMapper.selectById(Mockito.any())).thenReturn(null);
 
-        IotIngestService service = new IotIngestService(dataMapper, deviceMapper, anomalyMapper, engine, alertService);
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService);
 
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_env_01",
                 LocalDateTime.now().toString(),
@@ -90,17 +88,14 @@ class IotThresholdRuleEngineTest {
     @DisplayName("数据中断异常：与上次上报间隔 15 分钟时生成 DATA_GAP 事件")
     void ingestDetectsDataGap() {
         IotDeviceDataMapper dataMapper = Mockito.mock(IotDeviceDataMapper.class);
-        IotDeviceMapper deviceMapper = Mockito.mock(IotDeviceMapper.class);
         IotAnomalyEventMapper anomalyMapper = Mockito.mock(IotAnomalyEventMapper.class);
         IotFeishuAlertService alertService = new IotFeishuAlertService();
 
         LocalDateTime lastSeen = LocalDateTime.now().minusMinutes(20);
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(
                 IotDeviceData.builder().deviceId("dev_x").collectedAt(lastSeen).build());
-        Mockito.when(deviceMapper.selectById(Mockito.any())).thenReturn(
-                IotDevice.builder().deviceId("dev_x").lastSeen(lastSeen).build());
 
-        IotIngestService service = new IotIngestService(dataMapper, deviceMapper, anomalyMapper, engine, alertService);
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService);
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_x",
                 LocalDateTime.now().toString(),
                 List.of(new IotIngestService.MetricPoint("temperature", 25.0, "℃")));

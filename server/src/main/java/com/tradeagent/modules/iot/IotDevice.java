@@ -11,7 +11,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
-/** IoT 设备台账（一栋舍多台环控/料线设备）。 */
+/** IoT 设备台账（租户下多栋舍多台设备；CRUD 管理设备注册信息）。 */
 @Data
 @Builder
 @NoArgsConstructor
@@ -24,6 +24,12 @@ public class IotDevice {
     private String farmId;
     private String name;
     private String type;
+    /** 环控阈值覆盖：null = 用全局默认；采集校验时优先生效 */
+    private Double tempLow;
+    private Double tempHigh;
+    private Double humidLow;
+    private Double humidHigh;
     private LocalDateTime lastSeen;
     private LocalDateTime createTime;
+    private LocalDateTime updateTime;
 }
