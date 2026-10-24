@@ -16,6 +16,10 @@ import com.tradeagent.modules.ai.rag.benchmark.RagBenchmarkReport;
 import com.tradeagent.modules.ai.rag.benchmark.RagBenchmarkService;
 import com.tradeagent.modules.ai.rag.qa.RagQaRecord;
 import com.tradeagent.modules.ai.rag.qa.RagQaRecordMapper;
+import com.tradeagent.modules.ai.rag.rerank.CrossEncoderReranker;
+import com.tradeagent.modules.ai.rag.rerank.RerankCandidate;
+import com.tradeagent.modules.ai.rag.rerank.RerankHit;
+import com.tradeagent.modules.ai.rag.rerank.RerankReorderer;
 import com.tradeagent.modules.ai.vision.DocumentParseResult;
 import com.tradeagent.modules.ai.vision.PdfVisionFallbackService;
 import jakarta.annotation.PostConstruct;
@@ -76,6 +80,9 @@ public class KnowledgeBaseService {
     @Resource
     private DashScopeEmbeddingService embeddingService;
 
+    @Resource
+    private CrossEncoderReranker crossEncoderReranker;
+
     @Value("${dashscope.api-key:}")
     private String defaultDashScopeKey;
 
@@ -110,12 +117,14 @@ public class KnowledgeBaseService {
         private String docName;
         private String breadcrumb;
         private String chunkType;
-        private double score;
-        private double vectorSimilarity;
-        private double bm25Score;
-        private String snippet;
-        private String content;
-    }
+    private double score;
+    private double vectorSimilarity;
+    private double bm25Score;
+    /** Cross-Encoder 语义精排分（任务七），仅用于排序；融合分 score 仍是安全门禁唯一依据 */
+    private double rerankScore;
+    private String snippet;
+    private String content;
+}
 
     @Data
     @Builder
@@ -711,6 +720,26 @@ public class KnowledgeBaseService {
         citations = citations.stream().filter(c -> c.getScore() >= filterFloor).collect(Collectors.toList());
 
         int limit = topK > 0 ? topK : 4;
+
+        // 7. Cross-Encoder 语义二次精排 (任务七)：门禁已在上游以融合分执行完毕，
+        //    精排只负责在幸存候选中选出最终 Top-K，消除 Lost in the Middle；
+        //    未配置 Key 或调用失败时保持融合排序，主检索链路零中断。
+        if (crossEncoderReranker != null && crossEncoderReranker.isAvailable() && citations.size() > 1) {
+            try {
+                List<RerankCandidate> rerankCandidates = new ArrayList<>(citations.size());
+                for (RetrievalCitation c : citations) {
+                    String content = c.getContent() != null && !c.getContent().isBlank() ? c.getContent() : c.getSnippet();
+                    rerankCandidates.add(new RerankCandidate(c.getChunkId(), content, c.getScore()));
+                }
+                List<RerankHit> rerankHits = crossEncoderReranker.rerank(query, rerankCandidates, limit);
+                if (rerankHits != null && !rerankHits.isEmpty()) {
+                    citations = RerankReorderer.apply(citations, rerankHits);
+                }
+            } catch (Exception e) {
+                log.warn("【Cross-Encoder 精排降级】保持融合排序继续: {}", e.getMessage());
+            }
+        }
+
         if (citations.size() > limit) {
             citations = new ArrayList<>(citations.subList(0, limit));
         }

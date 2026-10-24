@@ -59,6 +59,14 @@ pgvector:
 dashscope:
   api-key: ${DASHSCOPE_API_KEY:}
 
+# Cross-Encoder 语义二次精排 (任务七)：DashScope gte-rerank-v2；未配置 Key 或调用失败时自动回退融合排序
+rag:
+  rerank:
+    enabled: ${RAG_RERANK_ENABLED:true}
+    model: ${RAG_RERANK_MODEL:gte-rerank-v2}
+    endpoint: ${RAG_RERANK_ENDPOINT:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+    timeout-ms: ${RAG_RERANK_TIMEOUT_MS:4000}
+
 # MyBatis-Plus 严格规范（坚决禁用二级缓存）
 mybatis-plus:
   configuration:

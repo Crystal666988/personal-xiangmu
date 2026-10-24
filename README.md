@@ -1,19 +1,19 @@
 # TradeAgent · 工业级外贸 AI 智能体工作流平台 (开源脱敏重构版)
 
-> **📅 文档最后更新**：2026-10-22（任务一至四完成，全量 162 测通过）  
-> **🔄 当前开发阶段**：RAG 知识库体系已生产就绪（召回率 90%、对抗防御 100%），智能体对话真实联通改造中
+> **📅 文档最后更新**：2026-10-24（任务一至八全量落地，194 测通过）  
+> **🔄 当前开发阶段**：RAG 知识库体系已生产就绪（召回率 90%、对抗防御 100%，已含 Cross-Encoder 精排），智能体对话真实联通改造中
 
 > **面向外贸出海全链路的分布式 AI Agent 协同平台**  
 > 涵盖多源拓客采集、N+4 市场洞察、AST/表格结构化 RAG、IM 实时聊天与画像抽取、DAG 决策调度、无字图表视觉降级、Saga 补偿邮件营销以及飞书生态深度集成。
 
 ---
 
-## 📌 最新工程里程碑：任务一至四全量落地与回归验证（2026-10-22）
+## 📌 最新工程里程碑：任务一至八全量落地与回归验证（2026-10-24）
 
-> **当前状态**：任务一（HITL）、任务二（Execution Checkpoints）、任务三（Saga 逆向补偿）、任务四（Reflection 有界纠偏）**已全部完成代码接入并通过全量集成测试（162/162 Tests Passed, 0 Failures, 0 Errors）**。  
-> **下一阶段**：交付给协同开发模型（ChatGPT）继续开发 **任务五（防翻车工程护栏 Guardrails）** 与 **任务六（三层复合记忆体系 Entity & Episodic Memory）**。
+> **当前状态**：任务一（HITL）、任务二（Execution Checkpoints）、任务三（Saga 逆向补偿）、任务四（Reflection 有界纠偏）、任务五（防翻车护栏）、任务六（三层复合记忆）、**任务七（Cross-Encoder 二次精排）、任务八（Agent 轨迹全息评测）已全部完成代码接入并通过全量回归（194 Tests, 0 Failures, 0 Errors）**。  
+> **下一阶段**：后端 SSE 真实流式对话端点（打通"前端直连大模型"的最后一公里）。
 
-### 已完成模块落地摘要（任务一至四）
+### 已完成模块落地摘要（任务五至八）
 
 | 模块 | 核心源码物理路径 | 功能特性与生产级保障 | 验证状态 |
 | :--- | :--- | :--- | :--- |
@@ -180,8 +180,8 @@
 | **Saga 分布式柔性逆向补偿** | 外部物理调用无法本地 SQL Rollback，下游失败或审批拒绝必须自动回滚 | ✅ **已实现**：`SagaCompensationManager` LIFO 逆向补偿栈执行回滚，工具支持幂等补正与审计记录。 | 无 |
 | **Reflection 反思与自愈循环** | 工具入参偶发格式错误不直接抛 500，回传 Error 给 LLM 自我纠偏 | ✅ **已实现**：`ReflectionCorrectionHandler` 可恢复异常捕获与局部 Prompt 自动反思修正重试（上限2次）。 | 无 |
 | **Memory 记忆分层体系** | Working（短期工作）、Entity（实体画像）、Episodic（情景向量） | ✅ **已实现**：Working（MySQL+滚动摘要截断）、Entity（`EntityMemoryService` 只填空不覆盖+人工加锁保护）、Episodic（`EpisodicMemoryService` pgvector+HNSW 案例沉淀与 Few-Shot 召回）。 | 无 |
-| **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **部分实现**：RAG 20 题四象限基准、意图 200 题混淆矩阵评测。 | ❌ **任务八待开发**：Agent 执行步数效率（Step Efficiency）、工具误调率与轨迹自动化评测。 |
-| **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **部分实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁。 | ❌ **任务七待开发**：Cross-Encoder 语义深度二次重排（Reranker）。 |
+| **Trajectory 轨迹全息评测** | 不仅看最终回答对错，更要评估规划步数最优度、工具命中率与自愈率 | ✅ **已实现**：`AgentTrajectoryBenchmarkService` 十条黄金轨迹离线全绿（工具 F1=100%、步数比=1.0、参数 21/21、自愈率 100%、高危拦截 1/1），接入真实 LLM 规划即可量化线上质量。 | 无 |
+| **RAG 工业精排进阶** | 解决长文本 Lost in the Middle，提升近似干扰下的极端区分度 | ✅ **已实现**：AST 语法切片、表格原子行三元组、1024 维百炼向量、BM25 倒排、0.40 安全门禁，`DashScopeCrossEncoderReranker`（gte-rerank-v2）二次精排与 `RerankReorderer` 稳定重排。 | 无（可选演进：本地 BGE-Reranker 驱动） |
 
 ---
 
@@ -376,12 +376,15 @@
 
 ---
 
-##### 任务七：Cross-Encoder 语义二次重排器 (Advanced RAG Reranker)
+##### 任务七：Cross-Encoder 语义二次重排器 (Advanced RAG Reranker) 【✅ 已落地完成】
 
-* **核心目标**：在 pgvector 稠密向量与 BM25 稀疏检索初筛出候选切片后，引入成对 Cross-Encoder 计算全局深层交互，消除长文本“迷失在中间（Lost in the Middle）”。
-* **代码物理路径**：
+* **核心目标**：在 pgvector 稠密向量与 BM25 稀疏检索初筛出候选切片后，引入成对 Cross-Encoder 计算全局深层交互，消除长文本”迷失在中间（Lost in the Middle）”。
+* **代码物理路径（已实现）**：
   - 重排器接口：`server/src/main/java/com/tradeagent/modules/ai/rag/rerank/CrossEncoderReranker.java`
-  - 本地/在线驱动：支持接入本地 BGE-Reranker-Large 或 DashScope Rerank API。
+  - 在线驱动：`server/src/main/java/com/tradeagent/modules/ai/rag/rerank/DashScopeCrossEncoderReranker.java`（阿里百炼 gte-rerank-v2，真实调用 `POST /api/v1/services/rerank/text-rerank/text-rerank`）
+  - 稳定重排：`server/src/main/java/com/tradeagent/modules/ai/rag/rerank/RerankReorderer.java`（只改顺序与 rerankScore，绝不改融合分）
+  - 集成点：`KnowledgeBaseService.retrieveCitations`（0.40 门禁与地板过滤之后、Top-K 截断之前）
+  - 单元测试：`DashScopeCrossEncoderRerankerTest`（请求契约/响应解析/越界丢弃/可用性）、`RerankReordererTest`（重排语义/缺失回退/稳定序）
 * **执行管道**：
   ```text
   User Query 
@@ -390,24 +393,28 @@
        └─ BM25 稀疏内存倒排 ──> 召回 Top-12
                    │
                    ▼ 合并去重为 15~18 个候选切片池
-                   │
-                   ▼ Cross-Encoder 联合编码打分 (Query, DocumentChunk)
-                   │
-                   ▼ 截取 Top-4 高置信度切片 ──> 注入 Prompt / 触发 0.40 安全门禁
+                   ▼ 融合打分 + 0.40 安全门禁 + 地板过滤（门禁永远以融合分为准）
+                   ▼ Cross-Encoder 联合编码打分 (Query, DocumentChunk)   ← 任务七
+                   ▼ 稳定重排后截取 Top-4 ──> 注入 Prompt
   ```
+* **工程保障**：未配置 `DASHSCOPE_API_KEY` 或精排调用失败时自动回退融合排序，主检索链路零中断；单次最多重排 24 个候选、单片截断 1200 字符（gte-rerank-v2 输入上限 30k tokens）；可通过 `RAG_RERANK_ENABLED` 环境变量整体关闭。
 
 ---
 
-##### 任务八：Agent 轨迹全息自动化评测 (Trajectory Evaluation)
+##### 任务八：Agent 轨迹全息自动化评测 (Trajectory Evaluation) 【✅ 已落地完成】
 
 * **核心目标**：参考 Carl 仓库中的《Agent 评估体系》，不局限于回答的文本质量，而是量化评估规划和执行的工程质量。
-* **代码物理路径**：
+* **代码物理路径（已实现）**：
   - 评测引擎：`server/src/main/java/com/tradeagent/modules/ai/intent/benchmark/AgentTrajectoryBenchmarkService.java`
-* **四大核心量化指标**：
-  1. **规划步数最优比（Step Efficiency Ratio）**：$S_{\\text{ratio}} = \\frac{\\text{理论最简步数}}{\\text{实际执行步数}}$；
-  2. **工具选择精准度（Tool Precision）**：选取的工具是否完全命中黄金工具集，有无冗余剪枝失效；
-  3. **参数自愈成功率（Self-Correction Rate）**：遇到可恢复入参错误时，在 2 轮内自我修正的概率；
-  4. **平均 Token 损耗与单轮延迟耗时（Token Budget & Latency）**。
+  - 黄金轨迹数据集：`AgentTrajectoryDataset.java`（10 条：GENERAL 1 / SINGLE_TURN 6 / SELF_CORRECTION 2 / SAFETY_CLARIFY 1）
+  - 评测接口：`AgentTrajectoryBenchmarkController.java`（`POST /api/v1/agent/trajectory-benchmark/run`、`GET /latest`）
+  - 自动化测试：`AgentTrajectoryBenchmarkTest.java`（离线 Redis 桩 + 脚本化规划输出，走真实校验/预检/执行闸门）
+* **四大核心量化指标（黄金轨迹实测：全部 1.0）**：
+  1. **规划步数最优比（Step Efficiency Ratio）**：理论最简步数 / 实际执行步数（实测 1.000）；
+  2. **工具选择精准度（Tool P/R/F1, micro）**：实测 Precision=100%、Recall=100%、F1=100%（8/8 命中，零多调零漏调）；
+  3. **参数自愈成功率（Self-Correction Rate）**：缺参被追问 → 补充后 2 轮预算内正确执行（实测 2/2 = 100%，参数 21/21 命中规范值）；
+  4. **延迟与规划器预算（Latency & Planner Budget）**：单案例平均 18.8ms（离线），12 次规划调用 / 4071 字符输出（接入真实 LLM 后替换为 Token 计量）。
+* **评测特点**：全程经过 `RoutingWorkflowService` 真实管线（结构校验 → 整单预检 → 只读工具执行），工具均为只读演示实现，零网络依赖可重复；CURRENCY 槽位遵循后端"显式方向语法"契约（如"美元兑换成人民币"），验证了防臆测门禁与轨迹评测的一致性。
 
 ---
 
@@ -537,7 +544,7 @@ personal-xiangmu/
    ```powershell
    cd "C:\\Users\\xiezi\\Desktop\\新项目\\personal-xiangmu\\server"
    ```
-2. **运行全量测试套件（含 162 个单元与集成测试）**：
+2. **运行全量测试套件（含 194 个单元与集成测试）**：
    ```powershell
    mvn test
    ```
