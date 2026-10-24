@@ -1,7 +1,7 @@
 # TradeAgent · 工业级外贸 AI 智能体工作流平台 (开源脱敏重构版)
 
-> **📅 文档最后更新**：2026-10-24（任务一至八全量落地，194 测通过）  
-> **🔄 当前开发阶段**：RAG 知识库体系已生产就绪（召回率 90%、对抗防御 100%，已含 Cross-Encoder 精排），智能体对话真实联通改造中
+> **📅 文档最后更新**：2026-10-24（任务一至八全量落地 + 后端 SSE 真实流式对话端点，194+ 测通过）  
+> **🔄 当前开发阶段**：后端 SSE 自动回复闭环已上线（`POST /api/v1/agent/chat/stream`，路由/工具/三区上下文/落库/心跳/断连止损全在服务端）；前端对话切换到该端点进行中
 
 > **面向外贸出海全链路的分布式 AI Agent 协同平台**  
 > 涵盖多源拓客采集、N+4 市场洞察、AST/表格结构化 RAG、IM 实时聊天与画像抽取、DAG 决策调度、无字图表视觉降级、Saga 补偿邮件营销以及飞书生态深度集成。
@@ -11,7 +11,7 @@
 ## 📌 最新工程里程碑：任务一至八全量落地与回归验证（2026-10-24）
 
 > **当前状态**：任务一（HITL）、任务二（Execution Checkpoints）、任务三（Saga 逆向补偿）、任务四（Reflection 有界纠偏）、任务五（防翻车护栏）、任务六（三层复合记忆）、**任务七（Cross-Encoder 二次精排）、任务八（Agent 轨迹全息评测）已全部完成代码接入并通过全量回归（194 Tests, 0 Failures, 0 Errors）**。  
-> **下一阶段**：后端 SSE 真实流式对话端点（打通"前端直连大模型"的最后一公里）。
+> **下一阶段**：前端 `chat-agent` 对话页从"浏览器直连大模型"切换到后端 SSE 端点（服务端已就绪：`POST /api/v1/agent/chat/stream`）。
 
 ### 已完成模块落地摘要（任务五至八）
 
@@ -614,7 +614,7 @@ personal-xiangmu/
 | **Plan-and-Execute 长文** | `/api/trade/article/generate` | `POST` | 两阶段大纲规划与并发撰写，Redis Hash 存档点断点续作 |
 | **飞书多维表格集成** | `/api/trade/feishu/bitable/webhook` | `POST` | Webhook 实时触发，异步背调与结构化回写 CRM 表格 |
 | **飞书文档 AST 同步** | `/api/trade/feishu/docs/sync` | `POST` | 开放平台 AST Block API 增量解析，父子标题面包屑分块注入向量库 |
-| **SSE 实时流式对话** | `/api/trade/chat/stream` | `GET` | 打字机流式输出，`doOnCancel` 客户端断连自动中断止损 Token |
+| **SSE 实时流式对话** | `/api/v1/agent/chat/stream` | `POST` | 后端真实联通：prepare 路由/工具 → 三区 Prompt → 服务端大模型流式生成 → 自动落库；meta/delta/done/error 事件 + 15s 心跳 + `doOnCancel` 断连止损 |
 
 ### RAG 知识库专用接口（已生产就绪 ✅）
 
