@@ -40,6 +40,11 @@
           <el-icon><Promotion /></el-icon>
           <template #title>飞书应用集成</template>
         </el-menu-item>
+
+        <el-menu-item index="/iot">
+          <el-icon><Cpu /></el-icon>
+          <template #title>IoT 设备接入</template>
+        </el-menu-item>
       </el-menu>
     </div>
 

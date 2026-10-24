@@ -59,6 +59,24 @@ pgvector:
 dashscope:
   api-key: ${DASHSCOPE_API_KEY:}
 
+# 温氏智慧养殖 IoT 链路：MQTT 接入 / Kafka 事件 / 飞书预警与日报
+iot:
+  mqtt:
+    enabled: ${IOT_MQTT_ENABLED:false}   # true = 连接 Broker 订阅设备主题
+    broker: ${IOT_MQTT_BROKER:tcp://127.0.0.1:1883}
+    client-id: ${IOT_MQTT_CLIENT_ID:tradeagent-iot}
+    topic: ${IOT_MQTT_TOPIC:wens/farm/+/data}
+  kafka:
+    enabled: ${IOT_KAFKA_ENABLED:false}  # true = 数据点转发 Kafka（需 spring.kafka.bootstrap-servers）
+  summary-cron: ${IOT_SUMMARY_CRON:0 0 23 * * ?}
+
+feishu:
+  iot-alert-webhook-url: ${FEISHU_IOT_ALERT_WEBHOOK_URL:}   # 群自定义机器人 Webhook，异常预警卡片
+  app-id: ${FEISHU_APP_ID:}                                  # 企业自建应用（日报写 Bitable 用）
+  app-secret: ${FEISHU_APP_SECRET:}
+  bitable-app-token: ${FEISHU_BITABLE_APP_TOKEN:}
+  bitable-table-id: ${FEISHU_BITABLE_TABLE_ID:}
+
 # Cross-Encoder 语义二次精排 (任务七)：DashScope gte-rerank-v2；未配置 Key 或调用失败时自动回退融合排序
 rag:
   rerank:

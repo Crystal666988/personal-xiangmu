@@ -98,6 +98,32 @@
             <version>0.1.6</version>
         </dependency>
 
+        <!-- IoT 设备接入: MQTT (EMQX/Mosquitto) -->
+        <dependency>
+            <groupId>org.eclipse.paho</groupId>
+            <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+            <version>1.2.5</version>
+        </dependency>
+
+        <!-- MQTT Spring Integration 适配（iot.mqtt.enabled=true 时装配） -->
+        <dependency>
+            <groupId>org.springframework.integration</groupId>
+            <artifactId>spring-integration-mqtt</artifactId>
+        </dependency>
+
+        <!-- 单测 Mock (项目此前用 Proxy 桩，这里补标准 Mockito) -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- 设备事件解耦: Kafka (未启用时走进程内事件) -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- Redis 缓存与分布式原子限流 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

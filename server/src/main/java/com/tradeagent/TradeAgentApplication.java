@@ -2,12 +2,14 @@ package com.tradeagent;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.EnableAsync;
 
 /**
  * TradeAgent 外贸 AI 智能体获客与多 Agent 协同平台启动类
  */
 @EnableAsync
+@EnableScheduling
 @SpringBootApplication(exclude = {
     org.springframework.ai.autoconfigure.openai.OpenAiAutoConfiguration.class
 })

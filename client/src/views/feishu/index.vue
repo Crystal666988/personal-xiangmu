@@ -101,6 +101,7 @@ import { feishuDocsSyncApi, feishuBitableWebhookApi } from '@/api/feishu'
 const scenarios = [
   { name: '云文档 → RAG 知识库', desc: '飞书 Docs 增量拉取，AST 切片后进向量库，群内/对话直接问答企业知识', need: '自建应用 + 文档读权限', demo: true },
   { name: '多维表格 CRM 商机背调', desc: '销售在 Bitable 新增商机 → Webhook 触发 Agent 海关/官网背调 → 结果回写表格列', need: '自建应用 + Bitable 读写权限', demo: true },
+  { name: 'IoT 设备异常人工预警', desc: '养殖/工厂智能设备经 MQTT 入库，阈值越界实时推送飞书预警卡片，需人工确认处理', need: '群机器人 Webhook 地址', demo: true },
   { name: '群机器人告警与日报', desc: 'Incoming Webhook 推送汇率异动、待跟进提醒、成交战报卡片，30 分钟即可接入', need: '群机器人 Webhook 地址', demo: false },
   { name: '审批 AI 摘要机器人', desc: '接入审批事件，AI 自动摘要报销/出差/折扣审批单并推送处理建议', need: '审批权限 + 事件订阅', demo: false },
   { name: '把本 Agent 接进飞书对话', desc: '企业自建应用长连接（WebSocket），在飞书聊天里直接 @ 本系统问答', need: '自建应用 + 事件订阅长连接', demo: false },

@@ -52,6 +52,13 @@ const routes = [
         name: 'FeishuApps',
         component: () => import('@/views/feishu/index.vue'),
         meta: { title: '飞书应用集成' }
+      },
+
+      {
+        path: '/iot',
+        name: 'IotMonitor',
+        component: () => import('@/views/iot/index.vue'),
+        meta: { title: 'IoT 设备接入' }
       }
     ]
   }
