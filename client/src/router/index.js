@@ -40,6 +40,12 @@ const routes = [
         name: 'ChatAgent',
         component: () => import('@/views/chat-agent/index.vue'),
         meta: { title: '智能体对话工作台' }
+      },
+      {
+        path: '/monitor',
+        name: 'AgentMonitor',
+        component: () => import('@/views/monitor/index.vue'),
+        meta: { title: '执行监控' }
       }
     ]
   }

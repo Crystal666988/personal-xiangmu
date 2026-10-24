@@ -18,7 +18,6 @@
           <div class="session-list-section">
             <div class="section-header-row">
               <span class="section-label">最近会话列表:</span>
-              <el-tag size="small" type="success" effect="plain" class="persist-tag">💾 MySQL 持久化</el-tag>
             </div>
             <div class="session-scroll-list">
               <div
@@ -48,46 +47,8 @@
             </div>
           </div>
 
-          <!-- 执行监控（路由/工具/耗时）：专业运维视图，与对话气泡分离 -->
-          <div class="monitor-section">
-            <div class="monitor-header">
-              <span class="section-label">⚡ 执行监控 (本会话)</span>
-              <el-tag size="small" type="info" effect="plain">{{ monitorEntries.length }} 轮</el-tag>
-            </div>
-            <div class="monitor-scroll-list">
-              <div
-                v-for="entry in monitorEntries"
-                :key="entry.index"
-                class="monitor-entry"
-              >
-                <div class="monitor-entry-header" @click="toggleMonitor(entry)">
-                  <span class="monitor-entry-time">{{ entry.time }}</span>
-                  <span class="monitor-entry-stat">
-                    工具 <strong>{{ entry.toolsCalled }}</strong> 次 ｜ <strong>{{ entry.totalLatency }}</strong> ms
-                  </span>
-                  <el-icon class="monitor-arrow" :class="{ 'is-expanded': entry.msg.monitorExpanded }"><ArrowDown /></el-icon>
-                </div>
-                <div v-if="entry.msg.monitorExpanded" class="monitor-entry-body font-mono">
-                  <div class="monitor-query text-truncate" :title="entry.query">问: {{ entry.query }}</div>
-                  <div v-if="entry.routingStatus" class="monitor-line">路由: {{ entry.routingStatus }}</div>
-                  <div v-for="(t, ti) in entry.traces" :key="ti" class="monitor-tool-row">
-                    <span class="monitor-tool-status" :class="t.status === 'SUCCESS' ? 'ok' : 'bad'"></span>
-                    {{ t.toolName || t.toolId }}
-                    <span class="monitor-tool-latency">{{ t.latencyMs }}ms</span>
-                  </div>
-                  <div v-if="!entry.traces.length" class="monitor-line">本轮未调用业务工具</div>
-                </div>
-              </div>
-              <el-empty v-if="monitorEntries.length === 0" description="暂无执行记录" :image-size="55" />
-            </div>
-          </div>
-
           <!-- 底部状态指示 -->
           <div class="sidebar-footer">
-            <div class="footer-tenant-badge">
-              <el-tag size="small" type="success" effect="plain">后端已连接 (48050)</el-tag>
-              <el-tag size="small" type="warning" effect="plain">☁️ 阿里云 OSS 归档</el-tag>
-            </div>
             <div class="footer-model-row font-mono text-truncate">
               {{ activeModelDisplayName }}
             </div>
@@ -106,9 +67,6 @@
                   <el-icon><Connection /></el-icon>
                 </span>
                 <span class="chat-title">{{ currentSessionTitle }}</span>
-                <el-tag size="small" type="success" effect="plain" class="header-status-tag">
-                  后端智能体 · 流式对话 · 执行监控见左栏
-                </el-tag>
               </div>
               <div class="chat-header-right">
                 <el-button size="small" type="primary" plain @click="openIntentBenchmarkDrawer">
@@ -836,42 +794,6 @@ const loadSavedConfig = async () => {
     console.warn('加载生效模型配置失败', e)
     savedModelConfig.value = null
   }
-}
-
-// 执行监控：从本会话消息里提取每轮的路由/工具/耗时（气泡不再展示，专业视图收敛于此）
-const monitorEntries = computed(() => {
-  const entries = []
-  const msgs = currentMessages.value
-  for (let i = 0; i < msgs.length; i++) {
-    const m = msgs[i]
-    if (m.role !== 'assistant') continue
-    const telemetry = m.telemetry || (m.routing && m.routing.telemetry) || null
-    const steps = m.reactSteps || (m.routing && m.routing.reactSteps) || []
-    const routingStatus = m.routingStatus || (m.routing && m.routing.routingStatus) || ''
-    const traces = telemetry && telemetry.traces
-      ? telemetry.traces.map(t => ({ toolId: t.toolId, toolName: t.toolName, status: t.status, latencyMs: t.latencyMs }))
-      : []
-    if (!telemetry && !steps.length && !routingStatus) continue
-    let query = ''
-    for (let j = i - 1; j >= 0; j--) {
-      if (msgs[j].role === 'user') { query = msgs[j].content; break }
-    }
-    entries.push({
-      index: i,
-      msg: m,
-      time: m.time || '',
-      query: (query || '').slice(0, 60),
-      routingStatus,
-      toolsCalled: telemetry ? telemetry.toolsCalledCount || 0 : 0,
-      totalLatency: telemetry ? telemetry.totalLatencyMs || 0 : 0,
-      traces
-    })
-  }
-  return entries.reverse()
-})
-
-const toggleMonitor = (entry) => {
-  entry.msg.monitorExpanded = !entry.msg.monitorExpanded
 }
 
 const activeModelDisplayName = computed(() => {
@@ -2069,13 +1991,6 @@ onMounted(() => {
         font-size: 12px;
         color: #909399;
       }
-
-      .persist-tag {
-        font-size: 10px;
-        padding: 0 4px;
-        height: 20px;
-        line-height: 18px;
-      }
     }
 
     .session-scroll-list {
@@ -2350,77 +2265,6 @@ onMounted(() => {
           line-height: 1.6;
           font-size: 14px;
           word-break: break-word;
-
-  /* 执行监控面板（左栏） */
-  .monitor-section {
-    border-top: 1px solid #f2f6fc;
-    padding: 8px 0 4px;
-
-    .monitor-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 4px 16px 6px;
-    }
-
-    .monitor-scroll-list {
-      max-height: 260px;
-      overflow-y: auto;
-      padding: 0 8px;
-    }
-
-    .monitor-entry {
-      border: 1px solid #ebeef5;
-      border-radius: 6px;
-      margin-bottom: 6px;
-      background: #fafbfc;
-      overflow: hidden;
-    }
-
-    .monitor-entry-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 10px;
-      cursor: pointer;
-      font-size: 12px;
-      color: #606266;
-
-      &:hover { background: #f5f7fa; }
-
-      .monitor-entry-time { color: #909399; }
-      .monitor-entry-stat { flex: 1; text-align: right; }
-      .monitor-arrow { transition: transform 0.2s; }
-      .monitor-arrow.is-expanded { transform: rotate(180deg); }
-    }
-
-    .monitor-entry-body {
-      padding: 6px 10px 8px;
-      border-top: 1px dashed #ebeef5;
-      font-size: 11.5px;
-      color: #606266;
-
-      .monitor-query { color: #303133; margin-bottom: 4px; }
-      .monitor-line { margin: 2px 0; }
-
-      .monitor-tool-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        margin: 3px 0;
-      }
-
-      .monitor-tool-status {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        &.ok { background: #67c23a; }
-        &.bad { background: #f56c6c; }
-      }
-
-      .monitor-tool-latency { color: #909399; margin-left: auto; }
-    }
-  }
 
           // 核心特性 2：CoT 思考链卡片 (集成阶段一路由决策、阶段二底层调度与阶段三模型深度推理)
           .thought-container {

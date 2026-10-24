@@ -316,8 +316,16 @@ public class AgentChatStreamService {
                             "latencyMs", trace.getLatencyMs()));
                 }
             }
+            var routingDto = context.routing();
+            Map<String, Object> routingInfo = Map.of(
+                    "domain", routingDto != null ? Objects.toString(routingDto.domain(), "") : "",
+                    "domainName", routingDto != null ? Objects.toString(routingDto.domainName(), "") : "",
+                    "reason", routingDto != null ? Objects.toString(routingDto.reason(), "") : "",
+                    "prunedToolsCount", routingDto != null ? routingDto.prunedToolsCount() : 0,
+                    "activeToolsCount", routingDto != null && routingDto.activeTools() != null ? routingDto.activeTools().size() : 0);
             return json.writeValueAsString(Map.of(
                     "routingStatus", Objects.toString(context.routingStatus(), ""),
+                    "routing", routingInfo,
                     "telemetry", Map.of(
                             "toolsCalledCount", telemetry != null ? telemetry.getToolsCalledCount() : 0,
                             "totalLatencyMs", telemetry != null ? telemetry.getTotalLatencyMs() : 0,

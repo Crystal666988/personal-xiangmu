@@ -461,3 +461,11 @@ export function executeSkillApi(id, params) {
   })
 }
 
+
+
+// ======================== Agent 执行监控（独立页面） ========================
+
+// 最近 N 轮对话的意图路由分析与工具调用耗时（数据库路由元数据，无密钥）
+export function getMonitorEntriesApi(tenantId = '1001', limit = 50) {
+  return request({ url: '/agent/monitor/recent', method: 'get', params: { tenantId, limit } })
+}

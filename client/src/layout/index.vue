@@ -30,6 +30,11 @@
           <el-icon><ChatDotRound /></el-icon>
           <template #title>智能体对话工作台</template>
         </el-menu-item>
+
+        <el-menu-item index="/monitor">
+          <el-icon><DataLine /></el-icon>
+          <template #title>执行监控</template>
+        </el-menu-item>
       </el-menu>
     </div>
 
@@ -88,6 +93,7 @@ import {
   Odometer,
   Cpu,
   ChatDotRound,
+  DataLine,
   Fold,
   Expand,
   CaretBottom
