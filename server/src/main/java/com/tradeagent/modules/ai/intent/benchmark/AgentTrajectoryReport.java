@@ -51,6 +51,8 @@ public class AgentTrajectoryReport {
     private double avgLatencyMs;
     private int plannerModelCalls;
     private long plannerOutputChars;
+    /** 规划器输出 Token 估算（CJK≈1/字，其余 4:1），工程口径非计费口径 */
+    private long plannerTokensEstimate;
 
     private List<CaseResult> cases;
 
@@ -71,7 +73,8 @@ public class AgentTrajectoryReport {
                 selfCorrectionRate * 100, selfCorrectionSuccesses, selfCorrectionTotal));
         sb.append(String.format("Safety clarify success   : %d/%d (高危参数禁止执行)%n", safetyClarifySuccesses, safetyClarifyTotal));
         sb.append(String.format("Avg case latency         : %.2f ms%n", avgLatencyMs));
-        sb.append(String.format("Planner budget           : %d 次调用, %d 字符输出%n", plannerModelCalls, plannerOutputChars));
+        sb.append(String.format("Planner budget           : %d 次调用, %d 字符输出 (≈%d tokens est.)%n",
+                plannerModelCalls, plannerOutputChars, plannerTokensEstimate));
 
         sb.append("\n-- Case details --\n");
         for (CaseResult result : cases) {

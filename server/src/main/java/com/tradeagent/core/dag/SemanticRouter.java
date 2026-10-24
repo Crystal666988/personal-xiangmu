@@ -16,6 +16,10 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 真实语义向量路由器 (Semantic Vector Router)
  * 彻底告别单纯的静态正则匹配！
+ *
+ * P2 定位：服务于【意图 200 题评测】与【/agent/tools/semantic-route 调试接口】，
+ * 不在生产聊天主路径上（聊天由 LLM 规划管线 RoutingWorkflowService 承担）。
+ *
  * 1. 预置 6 大领域的标准业务种子提问（涵盖通用闲聊、商业报价、知识库、客户背调、CRM销售跟进、视觉单据）；
  * 2. 系统启动时通过阿里百炼 text-embedding-v3 提取 1024 维稠密特征向量并持久化在向量索引表中；
  * 3. 运行时对用户任意自然语言提问提取 Embedding，计算余弦相似度 (Cosine Distance)，实现真正的语义命中！

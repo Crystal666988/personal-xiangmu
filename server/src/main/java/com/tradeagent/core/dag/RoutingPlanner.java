@@ -11,8 +11,9 @@ import java.util.Map;
 /**
  * 路由规划器：只产出工具调用计划，不执行任何工具。
  *
- * 该实现刻意与 ReActExecutor 当前的领域分支保持一致，用于测量“现状”；
- * 修正路由逻辑时应同时迁移 ReActExecutor 到这里，避免规划结果与真实执行结果分叉。
+ * 定位（P2 路由体系归一）：这是【规则路由评测基线】，供 RoutingEval 基线测量规则路由的能力边界；
+ * 生产聊天主路径是 LLM 规划管线（RoutingWorkflowService → RoutingPreviewService → ValidatedPlanExecutor）。
+ * 修正规则口径时只需维护本类与 RoutingEntityExtractor，不再影响生产链路。
  */
 @Component
 public class RoutingPlanner {

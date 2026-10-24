@@ -1,6 +1,7 @@
 package com.tradeagent.modules.ai.intent.benchmark;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tradeagent.core.common.TokenEstimator;
 import com.tradeagent.core.dag.EvidenceRoutingPlan;
 import com.tradeagent.modules.ai.chat.AgentMessage;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
@@ -55,6 +56,7 @@ public class AgentTrajectoryBenchmarkService {
         long latencySum = 0;
         int plannerModelCalls = 0;
         long plannerOutputChars = 0;
+        long plannerTokensEstimate = 0;
 
         for (AgentTrajectoryCase testCase : cases) {
             long caseStart = System.currentTimeMillis();
@@ -66,6 +68,7 @@ public class AgentTrajectoryBenchmarkService {
             boolean round1AsExpected = status1.equalsIgnoreCase(testCase.getExpectedRound1Status());
             plannerModelCalls++;
             plannerOutputChars += testCase.getRound1PlanJson() != null ? testCase.getRound1PlanJson().length() : 0;
+            plannerTokensEstimate += TokenEstimator.estimateTokens(testCase.getRound1PlanJson());
 
             boolean isSelfCorrection = "SELF_CORRECTION".equals(testCase.getCategory());
             boolean isSafetyClarify = "SAFETY_CLARIFY".equals(testCase.getCategory());
@@ -90,6 +93,7 @@ public class AgentTrajectoryBenchmarkService {
                 selfCorrected = "EXECUTED".equalsIgnoreCase(finalStatus);
                 plannerModelCalls++;
                 plannerOutputChars += testCase.getRound2PlanJson().length();
+                plannerTokensEstimate += TokenEstimator.estimateTokens(testCase.getRound2PlanJson());
             }
 
             // 实际执行工具集合与合并参数
@@ -203,6 +207,7 @@ public class AgentTrajectoryBenchmarkService {
                 .avgLatencyMs(cases.isEmpty() ? 0.0 : Math.round((double) latencySum / cases.size() * 100.0) / 100.0)
                 .plannerModelCalls(plannerModelCalls)
                 .plannerOutputChars(plannerOutputChars)
+                .plannerTokensEstimate(plannerTokensEstimate)
                 .cases(results)
                 .build();
 

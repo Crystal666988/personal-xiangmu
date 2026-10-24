@@ -1,6 +1,7 @@
 package com.tradeagent.modules.ai.chat;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tradeagent.core.common.TokenEstimator;
 import com.tradeagent.core.dag.ReActStep;
 import com.tradeagent.core.model.ModelConfig;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
@@ -92,6 +93,11 @@ public class AgentChatStreamService {
 
             // 正常生成：服务端调用大模型流式输出
             List<Message> prompt = assemblePrompt(context);
+            int promptTokensEstimate = 0;
+            for (Message message : prompt) {
+                promptTokensEstimate += TokenEstimator.estimateTokens(message.getContent());
+            }
+            log.info("【SSE 对话】本轮 Prompt 消息 {} 条, 估算上下文 Token ≈ {}", prompt.size(), promptTokensEstimate);
             ModelConfig modelConfig;
             try {
                 modelConfig = toModelConfig(tenantId, routingConfig);

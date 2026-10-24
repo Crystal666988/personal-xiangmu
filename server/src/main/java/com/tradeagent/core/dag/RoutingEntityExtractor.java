@@ -6,10 +6,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 路由参数抽取器。
+ * 路由参数抽取器（规则评测基线口径）。
  *
- * 当前版本严格对齐 ReActExecutor 中的实体抽取逻辑，用于建立路由评测基线；
- * 后续修正数量/港口/公司名抽取时，应在这里统一修改，避免 ReActExecutor 与评测结果脱节。
+ * 生产链路的参数解析使用 TypedSlotParser（LLM 证据片段 + 确定性解析 + 规范化词典）；
+ * 本类仅服务于规则路由评测基线（RoutingPlanner），保持与评测期望值一致的抽取口径。
  */
 public final class RoutingEntityExtractor {
 

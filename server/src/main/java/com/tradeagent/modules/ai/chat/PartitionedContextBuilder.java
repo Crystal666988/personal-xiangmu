@@ -25,6 +25,10 @@ import java.util.*;
 public class PartitionedContextBuilder {
 
     private static final int MAX_OBSERVATION_CHARS = 1000;
+    /** ZONE1 内容上限（角色设定 + 业务红线 + Few-Shot 案例）：超长保留头部，安全红线固定拼在末尾不被截断 */
+    private static final int MAX_ZONE1_CONTENT_CHARS = 6000;
+    /** ZONE2 内容上限（用户原始目标 + 实体画像）：超长保留头部 */
+    private static final int MAX_ZONE2_CONTENT_CHARS = 4000;
     private final ObjectMapper json;
 
     public PartitionedContextBuilder() {
@@ -138,7 +142,7 @@ public class PartitionedContextBuilder {
      */
     private String buildZone1SystemPrompt(String customPrompt) {
         String base = (customPrompt != null && !customPrompt.isBlank())
-                ? customPrompt.trim()
+                ? capHead(customPrompt.trim(), MAX_ZONE1_CONTENT_CHARS)
                 : "你是一名资深的外贸 B2B 智能商务专家，代表中国高端制造业进行全球客商接待。";
 
         return "<<<ZONE_1_SYSTEM_PROMPT>>>\n" +
@@ -155,7 +159,9 @@ public class PartitionedContextBuilder {
      * 构建 ZONE 2：用户初始不可篡改目标（置顶加权，防长链路漂移）
      */
     private String buildZone2ImmutableGoal(String goal) {
-        String safeGoal = (goal != null && !goal.isBlank()) ? goal.trim() : "（无指定目标）";
+        String safeGoal = (goal != null && !goal.isBlank())
+                ? capHead(goal.trim(), MAX_ZONE2_CONTENT_CHARS)
+                : "（无指定目标）";
         return "<<<ZONE_2_USER_IMMUTABLE_GOAL>>>\n" +
                 "【用户原始核心目标 · 全程置顶防漂移】\n" +
                 "用户发起的最终交付诉求：\"" + safeGoal + "\"\n" +
@@ -185,13 +191,23 @@ public class PartitionedContextBuilder {
 
         if (reactSteps != null && !reactSteps.isEmpty()) {
             sb.append("- **本轮 ReAct 推导轨迹 (最新 ").append(reactSteps.size()).append(" 步)**:\n");
+            int observationBudget = MAX_OBSERVATION_CHARS;
+            int appended = 0;
             for (ReActStep step : reactSteps) {
                 String toolId = step.getToolId() != null ? step.getToolId() : "";
                 String toolName = step.getToolName() != null ? step.getToolName() : toolId;
                 String label = toolName.equals(toolId) ? toolId : toolName + " (" + toolId + ")";
-                sb.append(String.format("  [%s #%d] %s: %s\n",
+                String line = String.format("  [%s #%d] %s: %s\n",
                         step.getType(), step.getStepIndex(), label.isBlank() ? "STEP" : label,
-                        truncateString(formatStepContent(step), 250)));
+                        truncateString(formatStepContent(step), 250));
+                if (line.length() > observationBudget) {
+                    sb.append(String.format("  ...[其余 %d 步已按 Observation 预算 (%d 字符) 截断]\n",
+                            reactSteps.size() - appended, MAX_OBSERVATION_CHARS));
+                    break;
+                }
+                sb.append(line);
+                observationBudget -= line.length();
+                appended++;
             }
         }
 
@@ -225,6 +241,12 @@ public class PartitionedContextBuilder {
         str = str.replaceAll("\\s+", " ").trim();
         if (str.length() <= maxChars) return str;
         return str.substring(0, maxChars) + "...[已剪裁]";
+    }
+
+    /** 保留原始换行/缩进的头部截断：用于 ZONE1/ZONE2 内容上限，尾部附加截断标记 */
+    private String capHead(String str, int maxChars) {
+        if (str == null || str.length() <= maxChars) return str;
+        return str.substring(0, maxChars) + "\n...[内容超过 " + maxChars + " 字符上限，已保留头部并截断]";
     }
 
     private String truncateJson(Object obj, int maxChars) {

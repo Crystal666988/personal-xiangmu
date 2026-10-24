@@ -24,6 +24,8 @@
 
 ---
 
+> **🧭 路由体系定位（P2 归一结论）**：生产聊天 = LLM 规划管线（`RoutingWorkflowService`，整单预检 + 证据绑定参数 + 追问闭环）；评测 = 任务八轨迹黄金 10 题 + 意图 200 题（`SemanticRouter` 语义向量）；规则基线 = `IntentRouter` 正则 + `RoutingPlanner`（RoutingEval 基线，离线回归用）；技能中心手动执行 = `ToolDispatchService`；遗留硬编码领域派发（`ReActExecutor`）已删除。上下文预算：ZONE1 6000 / ZONE2 4000 / ZONE3 Observation 1000 字符硬上限，Token 以 `TokenEstimator` 工程口径估算（CJK≈1/字，其余 4:1）。
+
 ---
 
 ## 🎯 项目背景与设计初衷
@@ -170,7 +172,7 @@
 
 | 知识模块 (llm-master 标准) | 工业核心痛点与原则 | TradeAgent 当前已实现状态 (Current Done) | 待开发全量缺口 (Backlog) |
 | :--- | :--- | :--- | :--- |
-| **Agent vs Workflow** | 拒绝盲目全自动 ReAct；确定性流程用 Workflow 固化，局部用 Agent 决策 | ✅ **已实现**：`IntentRouter` 单次生成 DAG 任务拓扑与槽位证据，由 `ValidatedPlanExecutor` 确定性编排推进。 | 无（架构形态已完全确立） |
+| **Agent vs Workflow** | 拒绝盲目全自动 ReAct；确定性流程用 Workflow 固化，局部用 Agent 决策 | ✅ **已实现**：生产聊天 = LLM 规划管线（`RoutingWorkflowService`：`OpenAiRoutingPlanGenerator` 出 DAG 任务与槽位证据 → `EvidencePlanValidator` 校验 → `ValidatedPlanExecutor` 整单预检确定性编排）；正则 `IntentRouter` 与 `SemanticRouter` 降级为评测/调试/兜底基线，遗留 `ReActExecutor` 已删除。 | 无（架构形态已完全确立） |
 | **Plan-and-Execute DAG 规划** | 全局任务拆解、依赖拓扑分析、消除工具盲目探索 | ✅ **已实现**：LLM 联合输出 DAG 任务序列，基于前序任务产物自动接力参数。 | 支持执行中途动态二次重规划（Dynamic Re-planning） |
 | **ReAct 思考与行动闭环** | Thought -> Action -> Observation 循环与全链路可观测 | ✅ **已实现**：实时捕获工具调度 Payload、执行耗时、环境物理 Observation，前端提供 ReAct 步骤时间轴。 | 无 |
 | **Failure Modes 防翻车护栏** | 防死循环、防长链路目标漂移（Goal Drift）、防参数幻觉 | ✅ **已实现**：`AgentGuardrailEngine`（最大步数 6 步硬熔断、单步 30s 超时、入参哈希死循环检测）与 `PartitionedContextBuilder`（三层物理隔离防目标漂移）。 | 无 |

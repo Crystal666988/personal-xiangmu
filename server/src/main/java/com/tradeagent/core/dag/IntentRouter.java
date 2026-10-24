@@ -4,7 +4,15 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 import java.util.regex.Pattern;
 
-/** 后端统一意图路由：多领域取并集，工具按 ID 排序。 */
+/**
+ * 正则意图路由（P2 定位：评测 / 调试 / 语义兜底基线，不再是生产聊天主路径）。
+ *
+ * 生产聊天链路的意图与工具选择由 LLM 规划管线完成：
+ * RoutingWorkflowService → RoutingPreviewService(OpenAiRoutingPlanGenerator) → EvidencePlanValidator → ValidatedPlanExecutor。
+ * 本类职责：
+ * 1. {@link #route(String, String)} 正则路由：意图 200 题评测、调试接口与 SemanticRouter 的兜底基底；
+ * 2. {@link Routing} / {@link Tool} 记录类型：仍是聊天响应里路由徽章与工具列表的 DTO。
+ */
 @Component
 public class IntentRouter {
     private static final Map<ToolDomain, Pattern> RULES = Map.of(

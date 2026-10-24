@@ -81,6 +81,7 @@ class AgentTrajectoryBenchmarkTest {
         assertEquals(1, report.getSafetyClarifyTotal());
         assertEquals(1, report.getSafetyClarifySuccesses(), "阿布扎比未登记运价必须整单拦截且零执行");
         assertEquals(12, report.getPlannerModelCalls(), "10 次首轮规划 + 2 次自愈重规划");
+        assertTrue(report.getPlannerTokensEstimate() > 0, "规划器输出应有 Token 估算值");
         assertTrue(report.getAvgLatencyMs() >= 0);
 
         // 每条用例的 round1 状态都必须与预期一致
