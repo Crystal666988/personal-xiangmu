@@ -270,7 +270,7 @@
                 <el-input
                   v-model="inputMessage"
                   type="textarea"
-                  :autosize="{ minRows: 2, maxRows: 6 }"
+                  :autosize="{ minRows: 1, maxRows: 8 }"
                   placeholder="请输入您的外贸咨询、技术疑问，或直接 Ctrl+V 粘贴截图/文件，点击左下角上传 (Enter 发送，Shift+Enter 换行)..."
                   resize="none"
                   :disabled="isGenerating"
@@ -1622,11 +1622,12 @@ const sendMessage = async () => {
     if (hasActiveModel) {
       ElMessage.success(`正在由后端智能体调度 ${userModelName} 结合文档内容流式作答...`)
 
-      const streamer = createSmoothStreamer({
-        targetMsg: assistantMsgObj,
-        onDone: finishAndSaveAssistantMsg,
-        stepInterval: 20
-      })
+      // 真实 SSE 增量即小粒度打字机：直接上屏，不做二次排队（平滑队列仅保留给本地兜底文本）
+      const streamer = {
+        push: (chunk) => { assistantMsgObj.content += chunk; scrollToBottom() },
+        finish: () => { finishAndSaveAssistantMsg() },
+        abort: () => {}
+      }
       currentStreamer = streamer
 
       // 后端 SSE 闭环：路由/工具/三区上下文/文档提取内容均在服务端组装并流式生成，回复自动落库
@@ -1710,11 +1711,12 @@ ${rawText}
   if (hasActiveModel) {
     ElMessage.info(`正在由 ${userModelName} 结合数据库多轮上下文思考并回答...`)
 
-    const streamer = createSmoothStreamer({
-      targetMsg: assistantMsgObj,
-      onDone: finishAndSaveAssistantMsg,
-      stepInterval: 20
-    })
+    // 真实 SSE 增量即小粒度打字机：直接上屏，不做二次排队
+    const streamer = {
+      push: (chunk) => { assistantMsgObj.content += chunk; scrollToBottom() },
+      finish: () => { finishAndSaveAssistantMsg() },
+      abort: () => {}
+    }
     currentStreamer = streamer
 
     // 后端 SSE 闭环：服务端组装三区上下文与工具事实并流式生成，回复自动落库
@@ -2276,7 +2278,7 @@ onMounted(() => {
         }
 
         .msg-bubble {
-          padding: 14px 18px;
+          padding: 10px 14px;
           box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
           line-height: 1.6;
           font-size: 14px;
@@ -2429,7 +2431,7 @@ onMounted(() => {
   }
 
   .chat-input-area {
-    padding: 10px 16px;
+    padding: 8px 12px 6px;
     border-top: 1px solid #ebeef5;
     background-color: #ffffff;
 
@@ -2825,6 +2827,14 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   padding-top: 10px;
+}
+/* 修掉 Markdown 末段 margin 造成的气泡底部大空白 */
+.bubble-content :deep(p:last-child),
+.thought-content :deep(p:last-child),
+.bubble-content :deep(ul:last-child),
+.bubble-content :deep(ol:last-child),
+.bubble-content :deep(pre:last-child) {
+  margin-bottom: 0;
 }
 </style>
 

@@ -301,8 +301,6 @@ public class AgentChatStreamService {
     }
 
     /** 会话消息路由元数据：前端历史时间轴可复用（reactSteps 精简为步骤骨架，不含大体积输出） */
-    /** 单步工具响应在监控明细里的截断上限（agent_message.routing 为 TEXT 列，防溢出） */
-    private static final int MAX_PERSISTED_OUTPUT_CHARS = 2500;
 
     private String buildRoutingMetadata(AgentContextService.ContextResult context) {
         try {
@@ -317,7 +315,7 @@ public class AgentChatStreamService {
                             "durationMs", step.getDurationMs(),
                             "summary", Objects.toString(step.getSummary(), Objects.toString(step.getThoughtText(), "")),
                             "toolParams", step.getToolParams() != null ? step.getToolParams() : Map.of(),
-                            "toolOutput", capStr(Objects.toString(step.getToolOutput(), ""))));
+                            "toolOutput", Objects.toString(step.getToolOutput(), "")));
                 }
             }
             TurnTelemetry telemetry = context.telemetry();
@@ -366,16 +364,12 @@ public class AgentChatStreamService {
             metaMap.put("reactSteps", steps);
             metaMap.put("plan", planJson);
             String meta = json.writeValueAsString(metaMap);
-            return meta.length() > 60000 ? meta.substring(0, 60000) : meta;
+            return json.writeValueAsString(metaMap);
         } catch (Exception e) {
             return null;
         }
     }
 
-    private static String capStr(String value) {
-        return value.length() <= MAX_PERSISTED_OUTPUT_CHARS ? value
-                : value.substring(0, MAX_PERSISTED_OUTPUT_CHARS) + "\n...[响应超过 " + MAX_PERSISTED_OUTPUT_CHARS + " 字符，已截断]";
-    }
 
     private ModelConfig toModelConfig(String tenantId, RoutingModelConfig routingConfig) {
         RoutingModelConfig effective = routingConfig;
