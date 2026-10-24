@@ -889,7 +889,7 @@ const getStepTypeDisplayLabel = (type) => {
   const map = {
     'THOUGHT': '💭 Thought 意图推导',
     'ACTION': '⚡ Action 调度工具',
-    'OBSERVATION': '✅ Observation 环境观测',
+    'OBSERVATION': '✅ 工具结果回传 (Observation)',
     'FINAL_ANSWER': '🏁 Final Answer 闭环交付'
   }
   return map[type] || type || 'STEP'
@@ -1154,15 +1154,14 @@ function createSmoothStreamer({ targetMsg, onDone, stepInterval = 20 }) {
     if (charQueue.length > 0) {
       // 自适应调速：缓冲队列短时 1-2 字符/次 (细腻丝滑打字感)；队列积压时自适应加速，防止滞后
       // 自适应调速：上限受控，保证肉眼可见的打字机节奏，杜绝憋一秒喷一大段
+      // 严格小步输出：常态 1 字/拍，仅队列深度积压时轻微提速，永远不出现整段跳变
       let step = 1
       const qLen = charQueue.length
-      if (qLen > 400) {
-        step = 10
-      } else if (qLen > 200) {
-        step = 6
-      } else if (qLen > 80) {
+      if (qLen > 1200) {
         step = 4
-      } else if (qLen > 30) {
+      } else if (qLen > 500) {
+        step = 3
+      } else if (qLen > 120) {
         step = 2
       } else {
         step = 1
@@ -1622,12 +1621,12 @@ const sendMessage = async () => {
     if (hasActiveModel) {
       ElMessage.success(`正在由后端智能体调度 ${userModelName} 结合文档内容流式作答...`)
 
-      // 真实 SSE 增量即小粒度打字机：直接上屏，不做二次排队（平滑队列仅保留给本地兜底文本）
-      const streamer = {
-        push: (chunk) => { assistantMsgObj.content += chunk; scrollToBottom() },
-        finish: () => { finishAndSaveAssistantMsg() },
-        abort: () => {}
-      }
+      // SSE 增量进入小步平滑队列：既不丢失后端节奏，又保证严格逐字上屏
+      const streamer = createSmoothStreamer({
+        targetMsg: assistantMsgObj,
+        onDone: finishAndSaveAssistantMsg,
+        stepInterval: 15
+      })
       currentStreamer = streamer
 
       // 后端 SSE 闭环：路由/工具/三区上下文/文档提取内容均在服务端组装并流式生成，回复自动落库
@@ -1711,12 +1710,12 @@ ${rawText}
   if (hasActiveModel) {
     ElMessage.info(`正在由 ${userModelName} 结合数据库多轮上下文思考并回答...`)
 
-    // 真实 SSE 增量即小粒度打字机：直接上屏，不做二次排队
-    const streamer = {
-      push: (chunk) => { assistantMsgObj.content += chunk; scrollToBottom() },
-      finish: () => { finishAndSaveAssistantMsg() },
-      abort: () => {}
-    }
+    // SSE 增量进入小步平滑队列：严格逐字上屏
+    const streamer = createSmoothStreamer({
+      targetMsg: assistantMsgObj,
+      onDone: finishAndSaveAssistantMsg,
+      stepInterval: 15
+    })
     currentStreamer = streamer
 
     // 后端 SSE 闭环：服务端组装三区上下文与工具事实并流式生成，回复自动落库
