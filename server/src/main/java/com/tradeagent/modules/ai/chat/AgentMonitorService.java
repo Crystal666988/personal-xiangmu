@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.LinkedHashMap;
 
 /**
  * Agent 执行监控服务：为独立「执行监控」页面提供每轮对话的
@@ -39,7 +40,8 @@ public class AgentMonitorService {
                              String query, String routingStatus,
                              String domain, String domainName, String reason,
                              int prunedToolsCount, int activeToolsCount,
-                             int toolsCalledCount, long totalLatencyMs, List<TraceRow> traces) {}
+                             int toolsCalledCount, long totalLatencyMs, List<TraceRow> traces,
+                             List<Map<String, Object>> reactSteps, String planJson) {}
 
     public List<MonitorRow> listRecent(String tenantId, int limit) {
         List<AgentSession> sessions = sessionMapper.selectList(new LambdaQueryWrapper<AgentSession>()
@@ -84,6 +86,8 @@ public class AgentMonitorService {
         int toolsCalled = 0;
         long totalLatency = 0;
         List<TraceRow> traces = new ArrayList<>();
+        List<Map<String, Object>> reactSteps = new ArrayList<>();
+        String planJson = "";
 
         try {
             JsonNode root = json.readTree(routingJson);
@@ -104,6 +108,20 @@ public class AgentMonitorService {
                         trace.path("status").asText(""),
                         trace.path("latencyMs").asLong(0)));
             }
+            for (JsonNode step : root.path("reactSteps")) {
+                Map<String, Object> stepMap = new LinkedHashMap<>();
+                stepMap.put("stepIndex", step.path("stepIndex").asInt(0));
+                stepMap.put("type", step.path("type").asText(""));
+                stepMap.put("toolId", step.path("toolId").asText(""));
+                stepMap.put("toolName", step.path("toolName").asText(""));
+                stepMap.put("status", step.path("status").asText(""));
+                stepMap.put("durationMs", step.path("durationMs").asLong(0));
+                stepMap.put("summary", step.path("summary").asText(""));
+                stepMap.put("toolParams", json.convertValue(step.path("toolParams"), Object.class));
+                stepMap.put("toolOutput", step.path("toolOutput").asText(""));
+                reactSteps.add(stepMap);
+            }
+            planJson = root.path("plan").asText("");
         } catch (Exception e) {
             log.warn("【执行监控】路由元数据解析跳过: {}", e.getMessage());
         }
@@ -116,7 +134,7 @@ public class AgentMonitorService {
                 query,
                 routingStatus,
                 domain, domainName, reason, pruned, activeCount,
-                toolsCalled, totalLatency, traces);
+                toolsCalled, totalLatency, traces, reactSteps, planJson);
     }
 
     /** 找该助手消息之前最近的一条用户提问。 */

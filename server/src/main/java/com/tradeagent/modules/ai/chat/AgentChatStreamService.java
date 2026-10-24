@@ -292,6 +292,9 @@ public class AgentChatStreamService {
     }
 
     /** 会话消息路由元数据：前端历史时间轴可复用（reactSteps 精简为步骤骨架，不含大体积输出） */
+    /** 单步工具响应在监控明细里的截断上限（agent_message.routing 为 TEXT 列，防溢出） */
+    private static final int MAX_PERSISTED_OUTPUT_CHARS = 2500;
+
     private String buildRoutingMetadata(AgentContextService.ContextResult context) {
         try {
             List<Map<String, Object>> steps = new ArrayList<>();
@@ -303,7 +306,9 @@ public class AgentChatStreamService {
                             "toolName", Objects.toString(step.getToolName(), ""),
                             "status", Objects.toString(step.getStatus(), ""),
                             "durationMs", step.getDurationMs(),
-                            "summary", Objects.toString(step.getSummary(), Objects.toString(step.getThoughtText(), ""))));
+                            "summary", Objects.toString(step.getSummary(), Objects.toString(step.getThoughtText(), "")),
+                            "toolParams", step.getToolParams() != null ? step.getToolParams() : Map.of(),
+                            "toolOutput", capStr(Objects.toString(step.getToolOutput(), ""))));
                 }
             }
             TurnTelemetry telemetry = context.telemetry();
@@ -323,17 +328,30 @@ public class AgentChatStreamService {
                     "reason", routingDto != null ? Objects.toString(routingDto.reason(), "") : "",
                     "prunedToolsCount", routingDto != null ? routingDto.prunedToolsCount() : 0,
                     "activeToolsCount", routingDto != null && routingDto.activeTools() != null ? routingDto.activeTools().size() : 0);
-            return json.writeValueAsString(Map.of(
-                    "routingStatus", Objects.toString(context.routingStatus(), ""),
-                    "routing", routingInfo,
-                    "telemetry", Map.of(
-                            "toolsCalledCount", telemetry != null ? telemetry.getToolsCalledCount() : 0,
-                            "totalLatencyMs", telemetry != null ? telemetry.getTotalLatencyMs() : 0,
-                            "traces", traceRows),
-                    "reactSteps", steps));
+            // 任务计划 JSON（LLM 产出的 tasks + 槽位证据），供执行监控页"详情"展示
+            String planJson = "";
+            if (context.routingPlan() != null && context.routingPlan().plan() != null) {
+                planJson = json.writeValueAsString(context.routingPlan().plan());
+            }
+            Map<String, Object> metaMap = new LinkedHashMap<>();
+            metaMap.put("routingStatus", Objects.toString(context.routingStatus(), ""));
+            metaMap.put("routing", routingInfo);
+            metaMap.put("telemetry", Map.of(
+                    "toolsCalledCount", telemetry != null ? telemetry.getToolsCalledCount() : 0,
+                    "totalLatencyMs", telemetry != null ? telemetry.getTotalLatencyMs() : 0,
+                    "traces", traceRows));
+            metaMap.put("reactSteps", steps);
+            metaMap.put("plan", planJson);
+            String meta = json.writeValueAsString(metaMap);
+            return meta.length() > 60000 ? meta.substring(0, 60000) : meta;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String capStr(String value) {
+        return value.length() <= MAX_PERSISTED_OUTPUT_CHARS ? value
+                : value.substring(0, MAX_PERSISTED_OUTPUT_CHARS) + "\n...[响应超过 " + MAX_PERSISTED_OUTPUT_CHARS + " 字符，已截断]";
     }
 
     private ModelConfig toModelConfig(String tenantId, RoutingModelConfig routingConfig) {
