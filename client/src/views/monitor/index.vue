@@ -53,6 +53,8 @@
                     <div class="expand-line"><span class="k">领域:</span> {{ row.domainName || row.domain || 'GENERAL' }}</div>
                     <div class="expand-line"><span class="k">路由依据:</span> {{ row.reason || '--' }}</div>
                     <div class="expand-line"><span class="k">工具剪枝:</span> 激活 {{ row.activeToolsCount }} 个 ｜ 剪枝 {{ row.prunedToolsCount }} 个</div>
+                    <div class="expand-line" v-if="row.activeToolNames && row.activeToolNames.length"><span class="k">激活明细:</span> {{ row.activeToolNames.join('、') }}</div>
+                    <div class="expand-line" v-if="row.prunedToolNames && row.prunedToolNames.length"><span class="k">剪枝明细:</span> {{ row.prunedToolNames.join('、') }}</div>
                   </div>
                   <div class="expand-block">
                     <div class="expand-block-title">🛠️ 工具调用统计 (合计 {{ row.toolsCalledCount }} 次 / {{ row.totalLatencyMs }} ms)</div>
@@ -116,6 +118,8 @@
           <div class="kv"><span class="k">领域:</span> {{ detailRow.domainName || detailRow.domain || 'GENERAL' }}</div>
           <div class="kv"><span class="k">路由依据:</span> {{ detailRow.reason || '--' }}</div>
           <div class="kv"><span class="k">工具剪枝:</span> 激活 {{ detailRow.activeToolsCount }} 个 ｜ 剪枝 {{ detailRow.prunedToolsCount }} 个</div>
+          <div class="kv" v-if="detailRow.activeToolNames && detailRow.activeToolNames.length"><span class="k">激活明细:</span> {{ detailRow.activeToolNames.join('、') }}</div>
+          <div class="kv" v-if="detailRow.prunedToolNames && detailRow.prunedToolNames.length"><span class="k">剪枝明细:</span> {{ detailRow.prunedToolNames.join('、') }}</div>
         </div>
 
         <div class="detail-section">

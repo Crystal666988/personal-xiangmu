@@ -133,7 +133,7 @@ class AgentChatStreamServiceTest {
     }
 
     private AgentChatStreamService service(FakeStreamer streamer) {
-        return new AgentChatStreamService(contextService, history, streamer, modelConfigs, new ObjectMapper());
+        return new AgentChatStreamService(contextService, history, streamer, modelConfigs, toolRegistry, new ObjectMapper());
     }
 
     private List<ServerSentEvent<String>> collect(AgentChatStreamService service, RoutingModelConfig config) {
@@ -157,10 +157,11 @@ class AgentChatStreamServiceTest {
 
         List<ServerSentEvent<String>> events = collect(service(streamer), config);
 
-        assertEquals("meta", events.get(0).event());
-        assertTrue(events.get(0).data().contains("EXECUTED"));
+        assertEquals("phase", events.get(0).event());
+        assertEquals("meta", events.get(1).event());
+        assertTrue(events.get(1).data().contains("EXECUTED"));
         assertEquals(List.of("delta", "delta", "delta"),
-                events.stream().skip(1).limit(3).map(ServerSentEvent::event).toList());
+                events.stream().skip(2).limit(3).map(ServerSentEvent::event).toList());
         assertEquals("done", events.get(events.size() - 1).event());
 
         // 助手回复已幂等落库且带路由元数据
@@ -197,10 +198,11 @@ class AgentChatStreamServiceTest {
 
         List<ServerSentEvent<String>> events = collect(service(streamer), config);
 
-        assertEquals("meta", events.get(0).event());
-        assertTrue(events.get(0).data().contains("NEEDS_CLARIFICATION"));
-        assertEquals("delta", events.get(1).event());
-        assertFalse(events.get(1).data().isBlank());
+        assertEquals("phase", events.get(0).event());
+        assertEquals("meta", events.get(1).event());
+        assertTrue(events.get(1).data().contains("NEEDS_CLARIFICATION"));
+        assertEquals("delta", events.get(2).event());
+        assertFalse(events.get(2).data().isBlank());
         assertEquals("done", events.get(events.size() - 1).event());
         assertTrue(events.get(events.size() - 1).data().contains("\"saved\":true"));
 
@@ -227,8 +229,9 @@ class AgentChatStreamServiceTest {
 
         List<ServerSentEvent<String>> events = collect(service(streamer), config);
 
-        assertEquals("delta", events.get(1).event());
-        assertEquals("error", events.get(2).event());
+        assertEquals("meta", events.get(1).event());
+        assertEquals("delta", events.get(2).event());
+        assertEquals("error", events.get(3).event());
         assertEquals("done", events.get(events.size() - 1).event());
         assertEquals(1, history.saved.size());
         assertEquals("部分回答", history.saved.get(0).getContent());
@@ -247,7 +250,8 @@ class AgentChatStreamServiceTest {
         FakeStreamer streamer = new FakeStreamer();
         List<ServerSentEvent<String>> events = collect(service(streamer), null);
 
-        assertEquals("error", events.get(0).event());
+        assertEquals("phase", events.get(0).event());
+        assertEquals("error", events.get(1).event());
         assertEquals("done", events.get(events.size() - 1).event());
         assertTrue(events.get(events.size() - 1).data().contains("\"saved\":false"));
         assertTrue(streamer.prompts.isEmpty());

@@ -41,7 +41,8 @@ public class AgentMonitorService {
                              String domain, String domainName, String reason,
                              int prunedToolsCount, int activeToolsCount,
                              int toolsCalledCount, long totalLatencyMs, List<TraceRow> traces,
-                             List<Map<String, Object>> reactSteps, String planJson) {}
+                             List<Map<String, Object>> reactSteps, String planJson,
+                             List<String> activeToolNames, List<String> prunedToolNames) {}
 
     public List<MonitorRow> listRecent(String tenantId, int limit) {
         List<AgentSession> sessions = sessionMapper.selectList(new LambdaQueryWrapper<AgentSession>()
@@ -88,6 +89,8 @@ public class AgentMonitorService {
         List<TraceRow> traces = new ArrayList<>();
         List<Map<String, Object>> reactSteps = new ArrayList<>();
         String planJson = "";
+        List<String> activeToolNames = new ArrayList<>();
+        List<String> prunedToolNames = new ArrayList<>();
 
         try {
             JsonNode root = json.readTree(routingJson);
@@ -98,6 +101,12 @@ public class AgentMonitorService {
             reason = routingInfo.path("reason").asText("");
             pruned = routingInfo.path("prunedToolsCount").asInt(0);
             activeCount = routingInfo.path("activeToolsCount").asInt(0);
+            for (JsonNode t : routingInfo.path("activeTools")) {
+                activeToolNames.add(t.asText(""));
+            }
+            for (JsonNode t : routingInfo.path("prunedTools")) {
+                prunedToolNames.add(t.asText(""));
+            }
             JsonNode telemetry = root.path("telemetry");
             toolsCalled = telemetry.path("toolsCalledCount").asInt(0);
             totalLatency = telemetry.path("totalLatencyMs").asLong(0);
@@ -134,7 +143,7 @@ public class AgentMonitorService {
                 query,
                 routingStatus,
                 domain, domainName, reason, pruned, activeCount,
-                toolsCalled, totalLatency, traces, reactSteps, planJson);
+                toolsCalled, totalLatency, traces, reactSteps, planJson, activeToolNames, prunedToolNames);
     }
 
     /** 找该助手消息之前最近的一条用户提问。 */

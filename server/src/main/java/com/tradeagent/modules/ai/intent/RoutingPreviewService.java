@@ -82,6 +82,18 @@ public final class RoutingPreviewService {
         return generate(originalQuery, null, null, modelConfig);
     }
 
+    /**
+     * 第一人称系统状态询问（如"你现在的redis里存了什么数据"、"你本地跑了什么服务"）：
+     * 问的是 AI 自身运行态，不属于任何业务工具域，绝不允许错误检索知识库；
+     * 直接按无工具 GENERAL 处理，由模型如实澄清自身边界。
+     */
+    private static final java.util.regex.Pattern FIRST_PERSON_RUNTIME_QUERY = java.util.regex.Pattern.compile(
+            "(?i)(你(现在|目前|本地|系统|自己|内部|这里)|你自己|你有没有|你在运行|你(存|跑)(了|着)|你的(redis|mysql|数据库|内存|知识库|系统|环境|服务)|你这边(有|存|跑))");
+
+    private boolean isFirstPersonRuntimeQuery(String query) {
+        return query != null && FIRST_PERSON_RUNTIME_QUERY.matcher(query).find();
+    }
+
     public record UserSource(String id, String content) {}
 
     public Preview previewSources(List<UserSource> userSources, Preview previous, RoutingModelConfig modelConfig) {
@@ -97,6 +109,12 @@ public final class RoutingPreviewService {
     private Preview generate(String originalQuery, Map<String, String> sources, Preview previous, RoutingModelConfig modelConfig) {
         if (originalQuery == null || originalQuery.isBlank() || originalQuery.length() > MAX_QUERY_LENGTH) {
             throw new IllegalArgumentException("query must contain 1 to 20000 characters");
+        }
+        // 第一人称运行态询问守卫：零工具直答，杜绝把"系统自身状态"问题错误检索进知识库
+        if (isFirstPersonRuntimeQuery(originalQuery)) {
+            return new Preview(Status.STRUCTURALLY_VALID, true,
+                    new EvidenceRoutingPlan(List.of(), List.of()), List.of(),
+                    List.of(), List.of(), List.of(), true);
         }
         if (!generator.isAvailable(modelConfig)) return failure(Status.MODEL_UNAVAILABLE, "MODEL_UNAVAILABLE");
         EvidenceToolCatalog.Snapshot snapshot;

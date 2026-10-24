@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tradeagent.core.common.TokenEstimator;
 import com.tradeagent.core.dag.ReActStep;
 import com.tradeagent.modules.ai.modelconfig.TenantModelConfigService;
+import com.tradeagent.modules.ai.tools.ToolDefinition;
+import com.tradeagent.modules.ai.tools.ToolRegistry;
 import com.tradeagent.core.model.ModelConfig;
 import com.tradeagent.modules.ai.intent.RoutingModelConfig;
 import com.tradeagent.modules.ai.tools.TurnTelemetry;
@@ -47,14 +49,17 @@ public class AgentChatStreamService {
     private final AgentSessionService sessionService;
     private final ChatStreamer streamer;
     private final TenantModelConfigService modelConfigs;
+    private final ToolRegistry toolRegistry;
     private final ObjectMapper json;
 
     public AgentChatStreamService(AgentContextService contextService, AgentSessionService sessionService,
-                                  ChatStreamer streamer, TenantModelConfigService modelConfigs, ObjectMapper json) {
+                                  ChatStreamer streamer, TenantModelConfigService modelConfigs,
+                                  ToolRegistry toolRegistry, ObjectMapper json) {
         this.contextService = contextService;
         this.sessionService = sessionService;
         this.streamer = streamer;
         this.modelConfigs = modelConfigs;
+        this.toolRegistry = toolRegistry;
         this.json = json;
     }
 
@@ -66,7 +71,11 @@ public class AgentChatStreamService {
      */
     public Flux<ServerSentEvent<String>> stream(String tenantId, String sessionId, String messageId,
                                                 RoutingModelConfig routingConfig) {
-        return Flux.merge(deferredBody(tenantId, sessionId, messageId, routingConfig), heartbeat())
+        // phase 事件先行推送：规划/编排期间的静默期也有内容感
+        Flux<ServerSentEvent<String>> body = Flux.concat(
+                Mono.just(event("phase", "🧠 已收到消息，正在解析意图并编排任务…")),
+                deferredBody(tenantId, sessionId, messageId, routingConfig));
+        return Flux.merge(body, heartbeat())
                 .takeUntil(event -> "done".equals(event.event()))
                 .subscribeOn(Schedulers.boundedElastic());
     }
@@ -322,12 +331,26 @@ public class AgentChatStreamService {
                 }
             }
             var routingDto = context.routing();
+            List<String> activeNames = new ArrayList<>();
+            if (routingDto != null && routingDto.activeTools() != null) {
+                routingDto.activeTools().forEach(t -> activeNames.add(Objects.toString(t.name(), t.id())));
+            }
+            java.util.Set<String> activeIds = new java.util.HashSet<>();
+            if (routingDto != null && routingDto.activeTools() != null) {
+                routingDto.activeTools().forEach(t -> activeIds.add(t.id()));
+            }
+            List<String> prunedNames = toolRegistry.listAllDefinitions().stream()
+                    .filter(def -> !activeIds.contains(def.getId()))
+                    .map(ToolDefinition::getName)
+                    .toList();
             Map<String, Object> routingInfo = Map.of(
                     "domain", routingDto != null ? Objects.toString(routingDto.domain(), "") : "",
                     "domainName", routingDto != null ? Objects.toString(routingDto.domainName(), "") : "",
                     "reason", routingDto != null ? Objects.toString(routingDto.reason(), "") : "",
                     "prunedToolsCount", routingDto != null ? routingDto.prunedToolsCount() : 0,
-                    "activeToolsCount", routingDto != null && routingDto.activeTools() != null ? routingDto.activeTools().size() : 0);
+                    "activeToolsCount", routingDto != null && routingDto.activeTools() != null ? routingDto.activeTools().size() : 0,
+                    "activeTools", activeNames,
+                    "prunedTools", prunedNames);
             // 任务计划 JSON（LLM 产出的 tasks + 槽位证据），供执行监控页"详情"展示
             String planJson = "";
             if (context.routingPlan() != null && context.routingPlan().plan() != null) {

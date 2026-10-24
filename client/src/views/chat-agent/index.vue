@@ -203,7 +203,7 @@
 
                         <!-- HITL 审批门禁与执行存档卡片 -->
             <HitlApprovalCard
-              v-if="currentExecution"
+              v-if="currentExecution && !isExecutionTerminal"
               :execution="currentExecution"
               :busy="executionBusy"
               :unavailable="Boolean(executionUnavailable[currentSessionId])"
@@ -270,7 +270,7 @@
                 <el-input
                   v-model="inputMessage"
                   type="textarea"
-                  :rows="3"
+                  :autosize="{ minRows: 2, maxRows: 6 }"
                   placeholder="请输入您的外贸咨询、技术疑问，或直接 Ctrl+V 粘贴截图/文件，点击左下角上传 (Enter 发送，Shift+Enter 换行)..."
                   resize="none"
                   :disabled="isGenerating"
@@ -796,6 +796,11 @@ const loadSavedConfig = async () => {
   }
 }
 
+const isExecutionTerminal = computed(() => {
+  const status = currentExecution.value?.status
+  return status === 'COMPLETED' || status === 'ROLLED_BACK' || status === 'REJECTED'
+})
+
 const activeModelDisplayName = computed(() => {
   if (savedModelConfig.value?.hasApiKey) {
     return `${savedModelConfig.value.modelName || 'qwen-plus'} (${savedModelConfig.value.keyTail || '已配置'})`
@@ -1148,15 +1153,16 @@ function createSmoothStreamer({ targetMsg, onDone, stepInterval = 20 }) {
 
     if (charQueue.length > 0) {
       // 自适应调速：缓冲队列短时 1-2 字符/次 (细腻丝滑打字感)；队列积压时自适应加速，防止滞后
+      // 自适应调速：上限受控，保证肉眼可见的打字机节奏，杜绝憋一秒喷一大段
       let step = 1
       const qLen = charQueue.length
-      if (qLen > 120) {
-        step = Math.ceil(qLen / 8)
-      } else if (qLen > 50) {
-        step = 5
-      } else if (qLen > 20) {
-        step = 3
-      } else if (qLen > 8) {
+      if (qLen > 400) {
+        step = 10
+      } else if (qLen > 200) {
+        step = 6
+      } else if (qLen > 80) {
+        step = 4
+      } else if (qLen > 30) {
         step = 2
       } else {
         step = 1
@@ -1299,7 +1305,7 @@ function generateDomainFallbackResponse(userText, routing) {
 
 // 后端 SSE 自动回复消费器：解析 meta/delta/done/error 事件帧（: ping 心跳注释帧自动忽略）
 // delta 负载为 JSON 编码文本增量，天然支持换行与前导空格；done 携带服务端落库的助手消息 ID
-async function streamBackendChat({ tenantId, sessionId, messageId, payload, signal, onMeta, onDelta, onError, onDone }) {
+async function streamBackendChat({ tenantId, sessionId, messageId, payload, signal, onMeta, onPhase, onDelta, onError, onDone }) {
   const url = `/api/v1/agent/chat/stream?tenantId=${encodeURIComponent(tenantId)}&sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`
   const response = await fetch(url, {
     method: 'POST',
@@ -1320,7 +1326,9 @@ async function streamBackendChat({ tenantId, sessionId, messageId, payload, sign
     const data = dataLines.join('\n')
     dataLines = []
     try {
-      if (eventName === 'delta') {
+      if (eventName === 'phase') {
+        onPhase && onPhase(data)
+      } else if (eventName === 'delta') {
         let chunk = data
         try { chunk = JSON.parse(data) } catch (_) {}
         if (chunk) onDelta && onDelta(chunk)
@@ -1631,6 +1639,10 @@ const sendMessage = async () => {
           sessionId: currentSessionId.value,
           messageId: savedUserMessage.id,
           signal: currentAbortController.signal,
+          onPhase: (text) => {
+            assistantMsgObj.thought += (text || '') + '\n'
+            scrollToBottom()
+          },
           onDelta: (chunk) => {
             streamer.push(chunk)
           },
@@ -1715,6 +1727,10 @@ ${rawText}
         sessionId: currentSessionId.value,
         messageId: savedUserMessage.id,
         signal: currentAbortController.signal,
+        onPhase: (text) => {
+          assistantMsgObj.thought += (text || '') + '\n'
+          scrollToBottom()
+        },
         onDelta: (chunk) => {
           streamer.push(chunk)
         },
