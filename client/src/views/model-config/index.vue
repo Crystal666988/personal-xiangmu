@@ -234,6 +234,10 @@ const fetchList = async () => {
 
 onMounted(async () => {
   await fetchList()
+  if (configList.value.length > 0) {
+    // 数据库已有配置：清理浏览器里的旧单份配置残留（已由数据库接管）
+    localStorage.removeItem(LEGACY_KEY)
+  }
   // 一次性迁移：数据库为空且浏览器里有旧的单份配置时，迁入数据库并清除本地残留
   if (configList.value.length === 0) {
     try {

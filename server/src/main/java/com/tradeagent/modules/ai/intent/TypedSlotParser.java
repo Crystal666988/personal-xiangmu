@@ -269,7 +269,7 @@ final class TypedSlotParser {
     /** Only explicit pair/direction syntax is supported; unspecified direction stays unresolved. */
     static String currencyDirection(String original) {
         var matcher = Pattern.compile("(?iu)(?:from\\s+)?(" + CURRENCY_TOKEN + ")\\s*"
-                + "(?:兑换(?:成|为)?|换(?:成|为)?|兑|转(?:成|为)?|to|->|→|/)\\s*(" + CURRENCY_TOKEN + ")")
+                + "(?:兑换(?:成|为)?|换(?:成|为)?|兑|转(?:成|为)?|对|to|->|→|/)\\s*(" + CURRENCY_TOKEN + ")")
                 .matcher(normalize(original));
         Set<String> pairs = new LinkedHashSet<>();
         while (matcher.find()) {
