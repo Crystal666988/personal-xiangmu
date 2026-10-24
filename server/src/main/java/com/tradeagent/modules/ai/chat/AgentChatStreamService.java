@@ -102,7 +102,7 @@ public class AgentChatStreamService {
             StringBuilder buffer = new StringBuilder();
             Flux<ServerSentEvent<String>> body = streamer.stream(prompt, modelConfig)
                     .doOnNext(buffer::append)
-                    .map(AgentChatStreamService::deltaEvent)
+                    .map(this::deltaEvent)
                     .onErrorResume(e -> {
                         log.warn("【SSE 对话】模型流式输出异常: {}", e.getMessage());
                         return Mono.just(event("error", "模型输出中断：" + e.getMessage()));
@@ -322,7 +322,14 @@ public class AgentChatStreamService {
         return ServerSentEvent.<String>builder().event(name).data(data).build();
     }
 
-    private static ServerSentEvent<String> deltaEvent(String chunk) {
-        return event("delta", chunk);
+    /** delta 负载 JSON 编码：文本增量可含换行/前导空格，JSON 化后前端解析零歧义 */
+    private ServerSentEvent<String> deltaEvent(String chunk) {
+        String payload;
+        try {
+            payload = json.writeValueAsString(chunk);
+        } catch (Exception e) {
+            payload = "\"" + chunk.replace("\"", "'").replace("\n", " ") + "\"";
+        }
+        return event("delta", payload);
     }
 }

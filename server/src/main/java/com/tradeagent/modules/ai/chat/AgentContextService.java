@@ -79,6 +79,13 @@ public class AgentContextService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "当前用户消息尚未保存或不属于该会话");
         }
         AgentMessage current = stored.get(boundary);
+        // 当前消息若带文档/图片提取文本，注入本轮 Prompt（上限 12000 字符）；历史消息沿用 800 字符节选策略
+        String currentInput = Objects.toString(current.getContent(), "");
+        String currentExtracted = attachmentField(current, "extractedText");
+        if (!currentExtracted.isBlank()) {
+            currentInput = currentInput + "\n【用户上传文档/图片的提取内容】\n"
+                    + currentExtracted.substring(0, Math.min(12000, currentExtracted.length()));
+        }
         var outcome = workflow.run(tenantId, sessionId, current, stored.subList(0, boundary + 1), modelConfig, routingAction);
         var routing = routing(outcome);
         List<Message> history = new ArrayList<>();
@@ -120,13 +127,13 @@ public class AgentContextService {
         List<Message> prompt = contexts.buildContextPrompt(summary.text(),
                 toolDescription(outcome),
                 history.subList(recentStart, history.size()),
-                current.getContent()).getInstructions();
+                currentInput).getInstructions();
         List<ContextMessage> messages = prompt.stream().map(m -> new ContextMessage(
                 m instanceof SystemMessage ? "system" : m instanceof AssistantMessage ? "assistant" : "user",
                 m.getContent())).toList();
         var partitioned = partitionedBuilder.build(
                 null,
-                current.getContent(),
+                currentInput,
                 history.subList(recentStart, history.size()),
                 summary.text(),
                 reactSteps,

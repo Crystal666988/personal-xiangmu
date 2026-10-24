@@ -1498,6 +1498,68 @@ function generateDomainFallbackResponse(userText, routing) {
 3. **模型热插拔支持**: 您可以前往左侧导航中的 **【AI 模型热插拔中心】** 配置阿里云百炼 (通义千问) 或 DeepSeek 的真实 API Key。配置后，系统将自动升级为旗舰大模型实时端到端流式推理！`
 }
 
+// 后端 SSE 自动回复消费器：解析 meta/delta/done/error 事件帧（: ping 心跳注释帧自动忽略）
+// delta 负载为 JSON 编码文本增量，天然支持换行与前导空格；done 携带服务端落库的助手消息 ID
+async function streamBackendChat({ tenantId, sessionId, messageId, payload, signal, onMeta, onDelta, onError, onDone }) {
+  const url = `/api/v1/agent/chat/stream?tenantId=${encodeURIComponent(tenantId)}&sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`后端对话服务 HTTP ${response.status}`)
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let eventName = 'message'
+  let dataLines = []
+  const dispatch = () => {
+    if (!dataLines.length) { eventName = 'message'; return }
+    const data = dataLines.join('\n')
+    dataLines = []
+    try {
+      if (eventName === 'delta') {
+        let chunk = data
+        try { chunk = JSON.parse(data) } catch (_) {}
+        if (chunk) onDelta && onDelta(chunk)
+      } else if (eventName === 'meta') {
+        let meta = null
+        try { meta = JSON.parse(data) } catch (_) {}
+        onMeta && onMeta(meta)
+      } else if (eventName === 'error') {
+        onError && onError(data)
+      } else if (eventName === 'done') {
+        let result = null
+        try { result = JSON.parse(data) } catch (_) {}
+        onDone && onDone(result)
+      }
+    } finally {
+      eventName = 'message'
+    }
+  }
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (signal.aborted) { try { await reader.cancel() } catch (_) {} break }
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, '')
+      if (line === '') { dispatch(); continue }
+      if (line.startsWith(':')) continue
+      if (line.startsWith('event:')) { eventName = line.slice(6).trim(); continue }
+      if (line.startsWith('data:')) {
+        dataLines.push(line.startsWith('data: ') ? line.slice(6) : line.slice(5))
+      }
+    }
+  }
+  dispatch()
+}
+
 // 直连大模型真实流式调用 (支持 DeepSeek / 通义千问原生 CoT 思考链与多模态视觉)
 async function callRealLlmStream({
   baseUrl,
@@ -1902,6 +1964,8 @@ ${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? docum
 
   // 助手消息落库函数
   let isSaved = false
+  // 后端 SSE 闭环已落库时携带服务端消息 ID；空字符串哨兵表示"断连止损路径已由后端保存，前端跳过"
+  let backendSavedMessageId = null
   const finishAndSaveAssistantMsg = async () => {
     if (isSaved) return
     isSaved = true
@@ -1912,7 +1976,11 @@ ${documentExtractResult.ocrSnippet || (documentExtractResult.rawMarkdown ? docum
     isGenerating.value = false
     scrollToBottom()
 
-    // 同步持久化落库至 MySQL
+    // 同步持久化落库至 MySQL（后端 SSE 闭环已落库时跳过，避免重复）
+    if (backendSavedMessageId !== null) {
+      if (backendSavedMessageId) assistantMsgObj.id = backendSavedMessageId
+      return
+    }
     try {
       const routingToSave = {
         ...(assistantMsgObj.routing || {}),
@@ -1960,12 +2028,7 @@ ${text || (isImage ? '请深入阅读上方图片/截图提取出的全部内容
     }
 
     if (userApiKey) {
-      ElMessage.success(`正在调用大模型 ${userModelName} 输出原生 CoT 思考链与全面提炼报告...`)
-
-      // 若明确配置了视觉大模型 (如 qwen3-vl-plus)，可附带轻量 OSS URL 辅助感知；
-      // 若使用 qwen-plus / deepseek-chat 等纯文本旗舰模型，直接基于高精 OCR 文本推理，零大图 Payload 阻塞！
-      const isVisualModel = userModelName.toLowerCase().includes('vl') || userModelName.toLowerCase().includes('vision')
-      const imageUrlToSend = (isImage && isVisualModel && documentExtractResult.ossUrl) ? documentExtractResult.ossUrl : null
+      ElMessage.success(`正在由后端智能体调度 ${userModelName} 结合文档内容流式作答...`)
 
       const streamer = createSmoothStreamer({
         targetMsg: assistantMsgObj,
@@ -1974,48 +2037,46 @@ ${text || (isImage ? '请深入阅读上方图片/截图提取出的全部内容
       })
       currentStreamer = streamer
 
+      // 后端 SSE 闭环：路由/工具/三区上下文/文档提取内容均在服务端组装并流式生成，回复自动落库
+      if (currentAbortController) { try { currentAbortController.abort() } catch (_) {} }
+      currentAbortController = new AbortController()
+
       try {
-        await callRealLlmStream({
-          baseUrl: userBaseUrl,
-          apiKey: userApiKey,
-          modelName: userModelName,
-          userPrompt: promptToSend,
-          contextMessages: preparedContext.messages,
-          imageUrl: imageUrlToSend,
-          onThought: (chunk) => {
-            assistantMsgObj.thought += chunk
-            scrollToBottom()
+        await streamBackendChat({
+          tenantId: sessionTenantId(currentSessionId.value),
+          sessionId: currentSessionId.value,
+          messageId: savedUserMessage.id,
+          payload: {
+            apiKey: userApiKey,
+            baseUrl: userBaseUrl,
+            modelName: userModelName,
+            tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
+            provider: 'openai'
           },
-          onContent: (chunk) => {
+          signal: currentAbortController.signal,
+          onDelta: (chunk) => {
             streamer.push(chunk)
           },
-          onDone: () => {
-            streamer.finish()
+          onError: (message) => {
+            ElMessage.error('模型输出中断: ' + message)
+            assistantMsgObj.content += `\n\n> ⚠️ **模型调用失败**: ${message}。请检查【AI 模型热插拔中心】中的配置！`
           },
-          onError: (err) => {
-            streamer.abort()
-            if (err.message && err.message.includes('503')) {
-              ElMessage.warning('大模型服务器高峰繁忙 (503)，建议稍后重试或切换模型')
-              assistantMsgObj.content = `### ⚠️ 模型服务端负载过载 (HTTP 503 Service is too busy)
-
-> **原因解析**：当前公网集群正处于推理高峰，网关下发了 503 限流告警 (\`Service is too busy\`)。
-
----
-
-#### 📄 本地/云端真实提取的内容已完整保留 (${documentExtractResult.characterCount} 字符):
-\`\`\`text
-${rawText}
-\`\`\``
-            } else {
-              ElMessage.error('调用模型失败: ' + err.message)
-              assistantMsgObj.content += `\n\n> ⚠️ **模型调用失败**: ${err.message}。请检查【AI 模型热插拔中心】中的配置！`
-            }
-            finishAndSaveAssistantMsg()
+          onDone: (result) => {
+            backendSavedMessageId = result?.assistantMessageId || ''
+            streamer.finish()
           }
         })
         return
       } catch (err) {
         if (currentStreamer) currentStreamer.abort()
+        if (currentAbortController && currentAbortController.signal.aborted) {
+          // 用户主动停止：后端断连止损路径已负责保存部分内容，前端不重复落库
+          backendSavedMessageId = ''
+          finishAndSaveAssistantMsg()
+          return
+        }
+        ElMessage.error('后端对话服务异常: ' + err.message)
+        assistantMsgObj.content += `\n\n> ⚠️ **后端对话服务异常**: ${err.message}`
         finishAndSaveAssistantMsg()
         return
       }
@@ -2086,33 +2147,46 @@ ${text}`
     })
     currentStreamer = streamer
 
+    // 后端 SSE 闭环：服务端组装三区上下文与工具事实并流式生成，回复自动落库
+    if (currentAbortController) { try { currentAbortController.abort() } catch (_) {} }
+    currentAbortController = new AbortController()
+
     try {
-      await callRealLlmStream({
-        baseUrl: userBaseUrl,
-        apiKey: userApiKey,
-        modelName: userModelName,
-        userPrompt: promptToSend,
-        contextMessages: preparedContext.messages,
-        onThought: (chunk) => {
-          assistantMsgObj.thought += chunk
-          scrollToBottom()
+      await streamBackendChat({
+        tenantId: sessionTenantId(currentSessionId.value),
+        sessionId: currentSessionId.value,
+        messageId: savedUserMessage.id,
+        payload: {
+          apiKey: userApiKey,
+          baseUrl: userBaseUrl,
+          modelName: userModelName,
+          tenantId: Number(sessionTenantId(currentSessionId.value)) || 1001,
+          provider: 'openai'
         },
-        onContent: (chunk) => {
+        signal: currentAbortController.signal,
+        onDelta: (chunk) => {
           streamer.push(chunk)
         },
-        onDone: () => {
-          streamer.finish()
+        onError: (message) => {
+          ElMessage.error('调用模型失败: ' + message)
+          assistantMsgObj.content += `\n\n> ⚠️ **调用失败**: ${message}`
         },
-        onError: (err) => {
-          streamer.abort()
-          ElMessage.error('调用模型失败: ' + err.message)
-          assistantMsgObj.content += `\n\n> ⚠️ **调用失败**: ${err.message}`
-          finishAndSaveAssistantMsg()
+        onDone: (result) => {
+          backendSavedMessageId = result?.assistantMessageId || ''
+          streamer.finish()
         }
       })
       return
     } catch (err) {
       if (currentStreamer) currentStreamer.abort()
+      if (currentAbortController && currentAbortController.signal.aborted) {
+        // 用户主动停止：后端断连止损路径已负责保存部分内容，前端不重复落库
+        backendSavedMessageId = ''
+        finishAndSaveAssistantMsg()
+        return
+      }
+      ElMessage.error('后端对话服务异常: ' + err.message)
+      assistantMsgObj.content += `\n\n> ⚠️ **后端对话服务异常**: ${err.message}`
       finishAndSaveAssistantMsg()
       return
     }
