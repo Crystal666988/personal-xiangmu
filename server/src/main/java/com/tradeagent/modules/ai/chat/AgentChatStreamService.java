@@ -106,7 +106,7 @@ public class AgentChatStreamService {
                 return Flux.concat(
                         Mono.just(event("meta", meta)),
                         Flux.just(event("delta", directive)),
-                        persistAndDone(tenantId, sessionId, directive, context, true, persisted));
+                        persistAndDone(tenantId, sessionId, directive, "", context, true, persisted));
             }
 
             // 正常生成：服务端调用大模型流式输出
@@ -124,20 +124,29 @@ public class AgentChatStreamService {
             }
 
             StringBuilder buffer = new StringBuilder();
+            StringBuilder reasoningBuffer = new StringBuilder();
             Flux<ServerSentEvent<String>> body = streamer.stream(prompt, modelConfig)
-                    .doOnNext(buffer::append)
-                    .map(this::deltaEvent)
+                    .doOnNext(piece -> {
+                        if ("thought".equals(piece.kind())) {
+                            reasoningBuffer.append(piece.text());
+                        } else {
+                            buffer.append(piece.text());
+                        }
+                    })
+                    .map(this::pieceEvent)
                     .onErrorResume(e -> {
                         log.warn("【SSE 对话】模型流式输出异常: {}", e.getMessage());
                         return Mono.just(event("error", "模型输出中断：" + e.getMessage()));
                     })
                     .doOnCancel(() -> {
                         log.info("【Token止损防御】客户端断连，上游模型订阅已取消；已收内容 {} 字符异步落库", buffer.length());
-                        Mono.fromRunnable(() -> saveOnce(tenantId, sessionId, buffer.toString(), context, false, persisted))
+                        Mono.fromRunnable(() -> saveOnce(tenantId, sessionId, buffer.toString(),
+                                        reasoningBuffer.toString(), context, false, persisted))
                                 .subscribeOn(Schedulers.boundedElastic())
                                 .subscribe();
                     })
-                    .concatWith(Mono.defer(() -> persistAndDone(tenantId, sessionId, buffer.toString(), context, false, persisted)));
+                    .concatWith(Mono.defer(() -> persistAndDone(tenantId, sessionId, buffer.toString(),
+                            reasoningBuffer.toString(), context, false, persisted)));
 
             return Flux.concat(Mono.just(event("meta", meta)), body);
         });
@@ -149,12 +158,12 @@ public class AgentChatStreamService {
     }
 
     private Mono<ServerSentEvent<String>> persistAndDone(String tenantId, String sessionId, String content,
-                                                         AgentContextService.ContextResult context,
+                                                         String reasoning, AgentContextService.ContextResult context,
                                                          boolean clarification, AtomicBoolean persisted) {
         return Mono.fromCallable(() -> {
             String savedId;
             try {
-                savedId = saveOnce(tenantId, sessionId, content, context, clarification, persisted);
+                savedId = saveOnce(tenantId, sessionId, content, reasoning, context, clarification, persisted);
             } catch (Exception e) {
                 savedId = null;
             }
@@ -171,17 +180,21 @@ public class AgentChatStreamService {
     }
 
     /** 幂等落库：正常完成、流中断、断连三条路径只允许保存一次 */
-    private String saveOnce(String tenantId, String sessionId, String content, 
+    private String saveOnce(String tenantId, String sessionId, String content, String reasoning,
                             AgentContextService.ContextResult context,
                             boolean clarification, AtomicBoolean persisted) {
         if (!persisted.compareAndSet(false, true)) return null;
         if (content == null || content.isBlank()) return null;
         try {
+            String thoughtFull = buildThought(context, clarification)
+                    + (reasoning != null && !reasoning.isBlank()
+                        ? "\n\n**【模型思考链 (reasoning)】**\n" + reasoning
+                        : "");
             AgentMessage message = AgentMessage.builder()
                     .sessionId(sessionId)
                     .role("assistant")
                     .content(content)
-                    .thought(buildThought(context, clarification))
+                    .thought(thoughtFull)
                     .thoughtDuration(0)
                     .routing(buildRoutingMetadata(context))
                     .attachment(null)
@@ -394,14 +407,14 @@ public class AgentChatStreamService {
         return ServerSentEvent.<String>builder().event(name).data(data).build();
     }
 
-    /** delta 负载 JSON 编码：文本增量可含换行/前导空格，JSON 化后前端解析零歧义 */
-    private ServerSentEvent<String> deltaEvent(String chunk) {
+    /** 流片段 → SSE 事件：thought 与 content 分事件名下发，负载 JSON 编码消除换行/空格歧义 */
+    private ServerSentEvent<String> pieceEvent(ChatStreamPiece piece) {
         String payload;
         try {
-            payload = json.writeValueAsString(chunk);
+            payload = json.writeValueAsString(piece.text());
         } catch (Exception e) {
-            payload = "\"" + chunk.replace("\"", "'").replace("\n", " ") + "\"";
+            payload = "\"" + piece.text().replace("\"", "'").replace("\n", " ") + "\"";
         }
-        return event("delta", payload);
+        return event("thought".equals(piece.kind()) ? "thought" : "delta", payload);
     }
 }

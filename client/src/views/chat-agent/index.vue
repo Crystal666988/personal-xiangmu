@@ -1304,7 +1304,7 @@ function generateDomainFallbackResponse(userText, routing) {
 
 // 后端 SSE 自动回复消费器：解析 meta/delta/done/error 事件帧（: ping 心跳注释帧自动忽略）
 // delta 负载为 JSON 编码文本增量，天然支持换行与前导空格；done 携带服务端落库的助手消息 ID
-async function streamBackendChat({ tenantId, sessionId, messageId, payload, signal, onMeta, onPhase, onDelta, onError, onDone }) {
+async function streamBackendChat({ tenantId, sessionId, messageId, payload, signal, onMeta, onPhase, onThought, onDelta, onError, onDone }) {
   const url = `/api/v1/agent/chat/stream?tenantId=${encodeURIComponent(tenantId)}&sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`
   const response = await fetch(url, {
     method: 'POST',
@@ -1327,6 +1327,10 @@ async function streamBackendChat({ tenantId, sessionId, messageId, payload, sign
     try {
       if (eventName === 'phase') {
         onPhase && onPhase(data)
+      } else if (eventName === 'thought') {
+        let chunk = data
+        try { chunk = JSON.parse(data) } catch (_) {}
+        if (chunk) onThought && onThought(chunk)
       } else if (eventName === 'delta') {
         let chunk = data
         try { chunk = JSON.parse(data) } catch (_) {}
@@ -1643,6 +1647,12 @@ const sendMessage = async () => {
             assistantMsgObj.thought += (text || '') + '\n'
             scrollToBottom()
           },
+          onThought: (chunk) => {
+            assistantMsgObj.isThinking = true
+            assistantMsgObj.isThoughtExpanded = true
+            assistantMsgObj.thought += chunk
+            scrollToBottom()
+          },
           onDelta: (chunk) => {
             streamer.push(chunk)
           },
@@ -1730,6 +1740,12 @@ ${rawText}
         signal: currentAbortController.signal,
         onPhase: (text) => {
           assistantMsgObj.thought += (text || '') + '\n'
+          scrollToBottom()
+        },
+        onThought: (chunk) => {
+          assistantMsgObj.isThinking = true
+          assistantMsgObj.isThoughtExpanded = true
+          assistantMsgObj.thought += chunk
           scrollToBottom()
         },
         onDelta: (chunk) => {

@@ -15,7 +15,7 @@ public interface ChatStreamer {
     /**
      * @param messages 完整 Prompt（ZONE1/ZONE2/ZONE3 + 历史窗口 + 当前问题）
      * @param config   租户绑定的模型配置（后端持有，绝不下发前端）
-     * @return 按到达顺序的文本增量流
+     * @return 按到达顺序的片段流：kind=thought（推理思考链）或 content（正文）
      */
-    Flux<String> stream(List<Message> messages, ModelConfig config);
+    Flux<ChatStreamPiece> stream(List<Message> messages, ModelConfig config);
 }

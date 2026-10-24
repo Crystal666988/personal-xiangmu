@@ -118,10 +118,10 @@ class AgentChatStreamServiceTest {
     static class FakeStreamer implements ChatStreamer {
         final List<List<Message>> prompts = new ArrayList<>();
         ModelConfig lastConfig;
-        final Deque<Flux<String>> scripted = new ArrayDeque<>();
+        final Deque<Flux<ChatStreamPiece>> scripted = new ArrayDeque<>();
 
         @Override
-        public Flux<String> stream(List<Message> messages, ModelConfig config) {
+        public Flux<ChatStreamPiece> stream(List<Message> messages, ModelConfig config) {
             prompts.add(List.copyOf(messages));
             lastConfig = config;
             return scripted.removeFirst();
@@ -152,7 +152,8 @@ class AgentChatStreamServiceTest {
                 """;
 
         FakeStreamer streamer = new FakeStreamer();
-        streamer.scripted.add(Flux.just("该型号", "报价已核算", "完成。"));
+        streamer.scripted.add(Flux.just(ChatStreamPiece.thought("先确定型号与数量，再查阶梯价目表"),
+                ChatStreamPiece.content("该型号"), ChatStreamPiece.content("报价已核算"), ChatStreamPiece.content("完成。")));
         var config = new RoutingModelConfig("offline-key", "https://unused.test", "model", 7L, "openai");
 
         List<ServerSentEvent<String>> events = collect(service(streamer), config);
@@ -160,8 +161,10 @@ class AgentChatStreamServiceTest {
         assertEquals("phase", events.get(0).event());
         assertEquals("meta", events.get(1).event());
         assertTrue(events.get(1).data().contains("EXECUTED"));
+        assertEquals("thought", events.get(2).event());
+        assertTrue(events.get(2).data().contains("阶梯价目表"));
         assertEquals(List.of("delta", "delta", "delta"),
-                events.stream().skip(2).limit(3).map(ServerSentEvent::event).toList());
+                events.stream().skip(3).limit(3).map(ServerSentEvent::event).toList());
         assertEquals("done", events.get(events.size() - 1).event());
 
         // 助手回复已幂等落库且带路由元数据
@@ -224,7 +227,7 @@ class AgentChatStreamServiceTest {
                 """;
 
         FakeStreamer streamer = new FakeStreamer();
-        streamer.scripted.add(Flux.just("部分回答").concatWith(Flux.error(new RuntimeException("boom"))));
+        streamer.scripted.add(Flux.just(ChatStreamPiece.content("部分回答")).concatWith(Flux.error(new RuntimeException("boom"))));
         var config = new RoutingModelConfig("offline-key", "https://unused.test", "model", 7L, "openai");
 
         List<ServerSentEvent<String>> events = collect(service(streamer), config);
