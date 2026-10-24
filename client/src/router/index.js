@@ -46,6 +46,12 @@ const routes = [
         name: 'AgentMonitor',
         component: () => import('@/views/monitor/index.vue'),
         meta: { title: '执行监控' }
+      },
+      {
+        path: '/feishu',
+        name: 'FeishuApps',
+        component: () => import('@/views/feishu/index.vue'),
+        meta: { title: '飞书应用集成' }
       }
     ]
   }

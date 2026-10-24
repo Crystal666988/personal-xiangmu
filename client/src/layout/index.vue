@@ -35,6 +35,11 @@
           <el-icon><DataLine /></el-icon>
           <template #title>执行监控</template>
         </el-menu-item>
+
+        <el-menu-item index="/feishu">
+          <el-icon><Promotion /></el-icon>
+          <template #title>飞书应用集成</template>
+        </el-menu-item>
       </el-menu>
     </div>
 
@@ -94,6 +99,7 @@ import {
   Cpu,
   ChatDotRound,
   DataLine,
+  Promotion,
   Fold,
   Expand,
   CaretBottom
