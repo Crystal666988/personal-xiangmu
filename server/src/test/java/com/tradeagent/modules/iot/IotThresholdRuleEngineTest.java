@@ -66,7 +66,7 @@ class IotThresholdRuleEngineTest {
 
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(null);
 
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService);
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor());
 
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_env_01",
                 LocalDateTime.now().toString(),
@@ -78,10 +78,15 @@ class IotThresholdRuleEngineTest {
         assertEquals(1, result.anomalies().size());
         assertEquals("TEMPERATURE_HIGH", result.anomalies().get(0).getRuleCode());
         assertEquals("CRITICAL", result.anomalies().get(0).getSeverity());
-        // 未配置 Webhook 时如实标记 SKIPPED_NO_WEBHOOK，绝不伪造已推送
-        assertEquals("SKIPPED_NO_WEBHOOK", result.anomalies().get(0).getFeishuState());
-        Mockito.verify(anomalyMapper, Mockito.times(1)).insert(Mockito.any(IotAnomalyEvent.class));
-        Mockito.verify(dataMapper, Mockito.times(2)).insert(Mockito.any(IotDeviceData.class));
+        // 告警抑制: 首轮越界仅留痕(feishuState 保持 PENDING), 连续第 3 轮才尝试推送
+        assertEquals("PENDING", result.anomalies().get(0).getFeishuState());
+        IotIngestService.IngestResult second = service.ingest(request);
+        assertEquals("PENDING", second.anomalies().get(0).getFeishuState());
+        IotIngestService.IngestResult third = service.ingest(request);
+        // 第 3 轮确认 → 尝试推送, 未配置 Webhook 如实标记 SKIPPED_NO_WEBHOOK
+        assertEquals("SKIPPED_NO_WEBHOOK", third.anomalies().get(0).getFeishuState());
+        Mockito.verify(anomalyMapper, Mockito.times(3)).insert(Mockito.any(IotAnomalyEvent.class));
+        Mockito.verify(dataMapper, Mockito.times(6)).insert(Mockito.any(IotDeviceData.class));
     }
 
     @Test
@@ -95,7 +100,7 @@ class IotThresholdRuleEngineTest {
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(
                 IotDeviceData.builder().deviceId("dev_x").collectedAt(lastSeen).build());
 
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService);
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor());
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_x",
                 LocalDateTime.now().toString(),
                 List.of(new IotIngestService.MetricPoint("temperature", 25.0, "℃")));

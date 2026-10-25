@@ -27,12 +27,15 @@ public class IotController {
     private final IotCommandService commandService;
     private final IotShadowService shadowService;
     private final IotDeadbandFilter deadbandFilter;
+    private final IotOtaService otaService;
+    private final IotDownsamplingService downsamplingService;
 
     public IotController(IotDeviceService deviceService, IotIngestService ingestService,
                          IotDataBufferService bufferService, IotLoadSimulatorService loadSimulator,
                          IotAnomalyEventMapper anomalyMapper, IotDeviceDataMapper dataMapper,
                          IotProductMapper productMapper, IotCommandService commandService,
-                         IotShadowService shadowService, IotDeadbandFilter deadbandFilter) {
+                         IotShadowService shadowService, IotDeadbandFilter deadbandFilter,
+                         IotOtaService otaService, IotDownsamplingService downsamplingService) {
         this.deviceService = deviceService;
         this.ingestService = ingestService;
         this.bufferService = bufferService;
@@ -43,12 +46,14 @@ public class IotController {
         this.commandService = commandService;
         this.shadowService = shadowService;
         this.deadbandFilter = deadbandFilter;
+        this.otaService = otaService;
+        this.downsamplingService = downsamplingService;
     }
 
     // ---------- 设备 CRUD ----------
 
     public record DeviceBody(String deviceId, String farmId, String name, String type,
-                             String productId, String location,
+                             String productId, String location, String secret,
                              Double tempLow, Double tempHigh, Double humidLow, Double humidHigh) {}
 
     @GetMapping("/devices")
@@ -82,7 +87,7 @@ public class IotController {
 
     private IotDeviceService.DeviceUpsert toUpsert(IotController.DeviceBody body) {
         return new IotDeviceService.DeviceUpsert(body.deviceId(), body.farmId(), body.name(),
-                body.type(), body.productId(), body.location(),
+                body.type(), body.productId(), body.location(), body.secret(),
                 body.tempLow(), body.tempHigh(), body.humidLow(), body.humidHigh());
     }
 
@@ -186,9 +191,15 @@ public class IotController {
                              String collectedAt, List<IotIngestService.MetricPoint> metrics) {}
 
     @PostMapping("/ingest")
-    public ApiResponse<Map<String, Object>> ingest(@RequestBody IngestBody body) {
+    public ApiResponse<Map<String, Object>> ingest(@RequestBody IngestBody body,
+            @RequestHeader(value = "X-Device-Secret", required = false) String deviceSecret) {
         IotDevice device = deviceService.require(
                 body.tenantId() == null ? "1001" : body.tenantId(), body.deviceId());
+        // 一机一密认证: 设备配置了 secret 后, 上报必须携带匹配密钥 (防伪造设备写脏数据)
+        if (device.getSecret() != null && !device.getSecret().isBlank()
+                && !device.getSecret().equals(deviceSecret)) {
+            throw new IllegalArgumentException("设备密钥校验失败: " + body.deviceId());
+        }
         IotIngestService.IngestRequest request = new IotIngestService.IngestRequest(
                 device.getTenantId(), device.getFarmId(), device.getDeviceId(),
                 body.collectedAt(), body.metrics());
@@ -277,6 +288,50 @@ public class IotController {
                 .eq(IotDeviceData::getDeviceId, deviceId)
                 .orderByDesc(IotDeviceData::getCollectedAt)
                 .last("LIMIT " + Math.min(Math.max(limit, 1), 500))));
+    }
+
+    // ---------- 难点5: 冷热分层降采样 ----------
+
+    @PostMapping("/downsample/now")
+    public ApiResponse<Integer> downsampleNow() {
+        return ApiResponse.success(downsamplingService.downsampleLastHour());
+    }
+
+    @GetMapping("/devices/{deviceId}/hourly")
+    public ApiResponse<List<Map<String, Object>>> hourlySeries(
+            @PathVariable("deviceId") String deviceId,
+            @RequestParam("metric") String metric,
+            @RequestParam(value = "hours", defaultValue = "24") int hours) {
+        return ApiResponse.success(downsamplingService.hourlySeries(deviceId, metric, hours));
+    }
+
+    // ---------- 难点6: OTA 固件灰度 ----------
+
+    public record FirmwareBody(String id, String version, String url, Long sizeBytes, String md5, Integer greyBatch) {}
+
+    @PostMapping("/firmware")
+    public ApiResponse<IotFirmware> createFirmware(@RequestBody FirmwareBody body) {
+        return ApiResponse.success(otaService.create(body.id(), body.version(), body.url(),
+                body.sizeBytes(), body.md5(), body.greyBatch() == null ? 10 : body.greyBatch()));
+    }
+
+    @GetMapping("/firmware")
+    public ApiResponse<List<IotFirmware>> listFirmware() {
+        return ApiResponse.success(otaService.list());
+    }
+
+    @PostMapping("/firmware/{id}/rollout")
+    public ApiResponse<Integer> rolloutFirmware(
+            @PathVariable("id") String id,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId) {
+        return ApiResponse.success(otaService.rollout(tenantId, id));
+    }
+
+    @GetMapping("/firmware/{id}/progress")
+    public ApiResponse<String> otaProgress(
+            @PathVariable("id") String id,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId) {
+        return ApiResponse.success(otaService.progress(tenantId, id));
     }
 
     // ---------- 压测器 ----------

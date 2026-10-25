@@ -24,6 +24,8 @@ public class IotDevice {
     private String farmId;
     private String productId;
     private String location;
+    private String secret;
+    private String firmwareVersion;
     private String name;
     private String type;
     /** 环控阈值覆盖：null = 用全局默认；采集校验时优先生效 */

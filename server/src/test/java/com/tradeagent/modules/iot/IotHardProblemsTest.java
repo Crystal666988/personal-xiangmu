@@ -144,7 +144,7 @@ class IotHardProblemsTest {
         IotAnomalyEventMapper anomalyMapper = Mockito.mock(IotAnomalyEventMapper.class);
         IotThresholdRuleEngine engine = new IotThresholdRuleEngine();
         IotFeishuAlertService alert = new IotFeishuAlertService();
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alert);
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alert, new IotAlarmSuppressor());
 
         // 未来 30 分钟 → 拒绝
         var future = new IotIngestService.IngestRequest("1001", "f", "d",
@@ -165,5 +165,28 @@ class IotHardProblemsTest {
                 LocalDateTime.now().plusMinutes(5).toString(),
                 List.of(new IotIngestService.MetricPoint("temperature", 25.0, "℃")));
         assertDoesNotThrow(() -> service.ingest(ok));
+    }
+}
+
+// ================= 难点8: 告警抑制 =================
+
+class AlarmSuppressionTest {
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("抑制: 连续3轮越界才告警, 首两轮仅留痕; 静默期内不重复")
+    void threeRoundConfirmAndSilence() {
+        IotAlarmSuppressor sup = new IotAlarmSuppressor();
+        assertEquals(IotAlarmSuppressor.Decision.RECORD_ONLY, sup.onBreach("d", "TEMPERATURE_HIGH", false));
+        assertEquals(IotAlarmSuppressor.Decision.RECORD_ONLY, sup.onBreach("d", "TEMPERATURE_HIGH", false));
+        assertEquals(IotAlarmSuppressor.Decision.ALERT, sup.onBreach("d", "TEMPERATURE_HIGH", false));
+        // 静默期内第 4 轮不再推送
+        assertEquals(IotAlarmSuppressor.Decision.RECORD_ONLY, sup.onBreach("d", "TEMPERATURE_HIGH", false));
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("抑制: DATA_GAP 致命类直通告警")
+    void dataGapImmediate() {
+        IotAlarmSuppressor sup = new IotAlarmSuppressor();
+        assertEquals(IotAlarmSuppressor.Decision.ALERT, sup.onBreach("d", "DATA_GAP", true));
     }
 }

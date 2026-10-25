@@ -25,14 +25,16 @@ public class IotIngestService {
     private final IotAnomalyEventMapper anomalyMapper;
     private final IotThresholdRuleEngine ruleEngine;
     private final IotFeishuAlertService alertService;
+    private final IotAlarmSuppressor alarmSuppressor;
 
     public IotIngestService(IotDeviceDataMapper dataMapper,
                             IotAnomalyEventMapper anomalyMapper, IotThresholdRuleEngine ruleEngine,
-                            IotFeishuAlertService alertService) {
+                            IotFeishuAlertService alertService, IotAlarmSuppressor alarmSuppressor) {
         this.dataMapper = dataMapper;
         this.anomalyMapper = anomalyMapper;
         this.ruleEngine = ruleEngine;
         this.alertService = alertService;
+        this.alarmSuppressor = alarmSuppressor;
     }
 
     /** 上报载荷：一次上报可带多个指标（环控器一次上温湿度氨气一组）。 */
@@ -66,9 +68,10 @@ public class IotIngestService {
 
         // 数据中断检测：与该设备上次上报间隔超阈值 → 掉线异常
         LocalDateTime lastSeen = lastSeenBefore(request.deviceId(), collectedAt);
-        List<IotAnomalyEvent> anomalies = new ArrayList<>();
+        final List<IotAnomalyEvent> allAnomalies = new ArrayList<>();
+        List<IotAnomalyEvent> anomalies = allAnomalies;
         ruleEngine.evaluateGap(lastSeen, collectedAt).ifPresent(gap ->
-                anomalies.add(IotAnomalyEvent.builder()
+                allAnomalies.add(IotAnomalyEvent.builder()
                         .tenantId(request.tenantId()).farmId(request.farmId()).deviceId(request.deviceId())
                         .metric(gap.metric()).metricValue(gap.value()).ruleCode(gap.ruleCode())
                         .severity(gap.severity()).message(gap.message())
@@ -86,7 +89,7 @@ public class IotIngestService {
                     .build());
             saved++;
             ruleEngine.evaluate(point.metric(), point.value()).forEach(eval ->
-                    anomalies.add(IotAnomalyEvent.builder()
+                    allAnomalies.add(IotAnomalyEvent.builder()
                             .tenantId(request.tenantId()).farmId(request.farmId()).deviceId(request.deviceId())
                             .metric(eval.metric()).metricValue(eval.value()).ruleCode(eval.ruleCode())
                             .severity(eval.severity()).message(eval.message())
@@ -94,19 +97,33 @@ public class IotIngestService {
                             .build()));
         }
 
-        // 异常落库 + 飞书人工预警（一次上报合并一张卡片；预警后回写数据库状态）
+        // 异常全部落库留痕; 告警抑制(连续3轮确认+10分钟静默, DATA_GAP 直通)后合并推送飞书
         if (!anomalies.isEmpty()) {
-            anomalies.forEach(anomalyMapper::insert);
-            var alert = alertService.pushAnomalyAlert(request.farmId(), request.deviceId(), anomalies);
-            anomalies.forEach(a -> {
+            // 全部落库留痕; 抑制器只决定"哪些值得推飞书"——返回值仍包含全部异常(可见性)
+            List<IotAnomalyEvent> alertable = new java.util.ArrayList<>();
+            for (IotAnomalyEvent event : anomalies) {
+                anomalyMapper.insert(event);
+                boolean immediate = "DATA_GAP".equals(event.getRuleCode());
+                if (alarmSuppressor.onBreach(request.deviceId(), event.getRuleCode(), immediate)
+                        == IotAlarmSuppressor.Decision.ALERT) {
+                    alertable.add(event);
+                }
+            }
+            if (!alertable.isEmpty()) {
+            var alert = alertService.pushAnomalyAlert(request.farmId(), request.deviceId(), alertable);
+            alertable.forEach(a -> {
                 a.setFeishuState(alert.state().name());
                 if (a.getId() != null) {
                     anomalyMapper.updateById(IotAnomalyEvent.builder()
                             .id(a.getId()).feishuState(alert.state().name()).build());
                 }
             });
-            log.info("【IoT 入库】设备 {} 保存 {} 点, 异常 {} 条, 预警: {}",
-                    request.deviceId(), saved, anomalies.size(), alert.state());
+            log.info("【IoT 入库】设备 {} 保存 {} 点, 异常 {} 条 (推送 {}), 预警: {}",
+                    request.deviceId(), saved, anomalies.size(), alertable.size(), alert.state());
+            } else {
+                log.info("【IoT 入库】设备 {} 保存 {} 点, 异常 {} 条 (全部被抑制, 仅留痕)",
+                        request.deviceId(), saved, anomalies.size());
+            }
         }
         return new IngestResult(saved, anomalies,
                 anomalies.isEmpty() ? new IotFeishuAlertService.AlertResult(

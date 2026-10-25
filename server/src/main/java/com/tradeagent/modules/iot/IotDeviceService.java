@@ -21,7 +21,7 @@ public class IotDeviceService {
     }
 
     public record DeviceUpsert(String deviceId, String farmId, String name, String type,
-                               String productId, String location,
+                               String productId, String location, String secret,
                                Double tempLow, Double tempHigh, Double humidLow, Double humidHigh) {}
 
     public List<IotDevice> list(String tenantId, String keyword) {
@@ -47,6 +47,7 @@ public class IotDeviceService {
                 .farmId(req.farmId().trim())
                 .productId(req.productId())
                 .location(req.location())
+                .secret(req.secret())
                 .name(req.name().trim())
                 .type(req.type() == null || req.type().isBlank() ? "ENV" : req.type().trim())
                 .tempLow(req.tempLow()).tempHigh(req.tempHigh())
@@ -63,6 +64,7 @@ public class IotDeviceService {
         device.setFarmId(req.farmId().trim());
         device.setProductId(req.productId());
         device.setLocation(req.location());
+        if (req.secret() != null) device.setSecret(req.secret().isBlank() ? null : req.secret());
         device.setName(req.name().trim());
         if (req.type() != null && !req.type().isBlank()) device.setType(req.type().trim());
         device.setTempLow(req.tempLow());
