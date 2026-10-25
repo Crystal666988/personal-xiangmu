@@ -23,21 +23,27 @@ public class IotController {
     private final IotLoadSimulatorService loadSimulator;
     private final IotAnomalyEventMapper anomalyMapper;
     private final IotDeviceDataMapper dataMapper;
+    private final IotProductMapper productMapper;
+    private final IotCommandService commandService;
 
     public IotController(IotDeviceService deviceService, IotIngestService ingestService,
                          IotDataBufferService bufferService, IotLoadSimulatorService loadSimulator,
-                         IotAnomalyEventMapper anomalyMapper, IotDeviceDataMapper dataMapper) {
+                         IotAnomalyEventMapper anomalyMapper, IotDeviceDataMapper dataMapper,
+                         IotProductMapper productMapper, IotCommandService commandService) {
         this.deviceService = deviceService;
         this.ingestService = ingestService;
         this.bufferService = bufferService;
         this.loadSimulator = loadSimulator;
         this.anomalyMapper = anomalyMapper;
         this.dataMapper = dataMapper;
+        this.productMapper = productMapper;
+        this.commandService = commandService;
     }
 
     // ---------- 设备 CRUD ----------
 
     public record DeviceBody(String deviceId, String farmId, String name, String type,
+                             String productId, String location,
                              Double tempLow, Double tempHigh, Double humidLow, Double humidHigh) {}
 
     @GetMapping("/devices")
@@ -71,7 +77,92 @@ public class IotController {
 
     private IotDeviceService.DeviceUpsert toUpsert(IotController.DeviceBody body) {
         return new IotDeviceService.DeviceUpsert(body.deviceId(), body.farmId(), body.name(),
-                body.type(), body.tempLow(), body.tempHigh(), body.humidLow(), body.humidHigh());
+                body.type(), body.productId(), body.location(),
+                body.tempLow(), body.tempHigh(), body.humidLow(), body.humidHigh());
+    }
+
+    // ---------- 产品型号 CRUD ----------
+
+    public record ProductBody(String id, String name, String model, String protocol,
+                              String vendor, String metricsJson) {}
+
+    @GetMapping("/products")
+    public ApiResponse<List<IotProduct>> products(
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId) {
+        return ApiResponse.success(productMapper.selectList(new LambdaQueryWrapper<IotProduct>()
+                .eq(IotProduct::getTenantId, tenantId)
+                .orderByDesc(IotProduct::getCreateTime)));
+    }
+
+    @PostMapping("/products")
+    public ApiResponse<IotProduct> createProduct(
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId,
+            @RequestBody ProductBody body) {
+        if (body.id() == null || body.id().isBlank() || body.name() == null || body.name().isBlank()
+                || body.model() == null || body.model().isBlank()) {
+            throw new IllegalArgumentException("产品 ID / 名称 / 型号均为必填项");
+        }
+        IotProduct product = IotProduct.builder()
+                .id(body.id().trim()).tenantId(tenantId)
+                .name(body.name().trim()).model(body.model().trim())
+                .protocol(body.protocol() == null || body.protocol().isBlank() ? "MQTT" : body.protocol().trim())
+                .vendor(body.vendor()).metricsJson(body.metricsJson())
+                .createTime(LocalDateTime.now())
+                .build();
+        productMapper.insert(product);
+        return ApiResponse.success(product);
+    }
+
+    @PutMapping("/products/{id}")
+    public ApiResponse<IotProduct> updateProduct(
+            @PathVariable("id") String id,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId,
+            @RequestBody ProductBody body) {
+        IotProduct product = productMapper.selectById(id);
+        if (product == null || !tenantId.equals(product.getTenantId())) {
+            throw new IllegalArgumentException("产品不存在");
+        }
+        product.setName(body.name().trim());
+        product.setModel(body.model().trim());
+        product.setProtocol(body.protocol() != null && !body.protocol().isBlank() ? body.protocol().trim() : product.getProtocol());
+        product.setVendor(body.vendor());
+        product.setMetricsJson(body.metricsJson());
+        productMapper.updateById(product);
+        return ApiResponse.success(product);
+    }
+
+    @DeleteMapping("/products/{id}")
+    public ApiResponse<Boolean> deleteProduct(
+            @PathVariable("id") String id,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId) {
+        IotProduct product = productMapper.selectById(id);
+        if (product == null || !tenantId.equals(product.getTenantId())) throw new IllegalArgumentException("产品不存在");
+        long deviceCount = deviceService.countByProduct(tenantId, id);
+        if (deviceCount > 0) throw new IllegalArgumentException("该产品下还有 " + deviceCount + " 台设备，请先删除设备");
+        return ApiResponse.success(productMapper.deleteById(id) > 0);
+    }
+
+    // ---------- 指令下发（Downlink） ----------
+
+    public record CommandBody(String commandJson) {}
+
+    @PostMapping("/devices/{deviceId}/command")
+    public ApiResponse<IotCommandService.CommandResult> sendCommand(
+            @PathVariable("deviceId") String deviceId,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId,
+            @RequestBody CommandBody body) {
+        if (body.commandJson() == null || body.commandJson().isBlank()) {
+            throw new IllegalArgumentException("指令内容不能为空");
+        }
+        return ApiResponse.success(commandService.send(tenantId, deviceId, body.commandJson()));
+    }
+
+    @GetMapping("/devices/{deviceId}/commands")
+    public ApiResponse<List<IotCommandLog>> deviceCommands(
+            @PathVariable("deviceId") String deviceId,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId,
+            @RequestParam(value = "limit", defaultValue = "20") int limit) {
+        return ApiResponse.success(commandService.recentCommands(tenantId, deviceId, limit));
     }
 
     // ---------- 数据上报（单点 = 设备直报；批量 = 网关汇聚） ----------

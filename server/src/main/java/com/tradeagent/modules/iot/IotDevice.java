@@ -22,6 +22,8 @@ public class IotDevice {
     private String deviceId;
     private String tenantId;
     private String farmId;
+    private String productId;
+    private String location;
     private String name;
     private String type;
     /** 环控阈值覆盖：null = 用全局默认；采集校验时优先生效 */

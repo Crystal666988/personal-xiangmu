@@ -21,6 +21,7 @@ public class IotDeviceService {
     }
 
     public record DeviceUpsert(String deviceId, String farmId, String name, String type,
+                               String productId, String location,
                                Double tempLow, Double tempHigh, Double humidLow, Double humidHigh) {}
 
     public List<IotDevice> list(String tenantId, String keyword) {
@@ -44,6 +45,8 @@ public class IotDeviceService {
                 .deviceId(req.deviceId().trim())
                 .tenantId(tenantId)
                 .farmId(req.farmId().trim())
+                .productId(req.productId())
+                .location(req.location())
                 .name(req.name().trim())
                 .type(req.type() == null || req.type().isBlank() ? "ENV" : req.type().trim())
                 .tempLow(req.tempLow()).tempHigh(req.tempHigh())
@@ -58,6 +61,8 @@ public class IotDeviceService {
         validate(req);
         IotDevice device = owned(tenantId, deviceId);
         device.setFarmId(req.farmId().trim());
+        device.setProductId(req.productId());
+        device.setLocation(req.location());
         device.setName(req.name().trim());
         if (req.type() != null && !req.type().isBlank()) device.setType(req.type().trim());
         device.setTempLow(req.tempLow());
@@ -74,6 +79,12 @@ public class IotDeviceService {
         return deviceMapper.delete(new LambdaQueryWrapper<IotDevice>()
                 .eq(IotDevice::getTenantId, tenantId)
                 .eq(IotDevice::getDeviceId, deviceId)) > 0;
+    }
+
+    public long countByProduct(String tenantId, String productId) {
+        return deviceMapper.selectCount(new LambdaQueryWrapper<IotDevice>()
+                .eq(IotDevice::getTenantId, tenantId)
+                .eq(IotDevice::getProductId, productId));
     }
 
     public IotDevice require(String tenantId, String deviceId) {
