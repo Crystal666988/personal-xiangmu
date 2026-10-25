@@ -25,11 +25,14 @@ public class IotController {
     private final IotDeviceDataMapper dataMapper;
     private final IotProductMapper productMapper;
     private final IotCommandService commandService;
+    private final IotShadowService shadowService;
+    private final IotDeadbandFilter deadbandFilter;
 
     public IotController(IotDeviceService deviceService, IotIngestService ingestService,
                          IotDataBufferService bufferService, IotLoadSimulatorService loadSimulator,
                          IotAnomalyEventMapper anomalyMapper, IotDeviceDataMapper dataMapper,
-                         IotProductMapper productMapper, IotCommandService commandService) {
+                         IotProductMapper productMapper, IotCommandService commandService,
+                         IotShadowService shadowService, IotDeadbandFilter deadbandFilter) {
         this.deviceService = deviceService;
         this.ingestService = ingestService;
         this.bufferService = bufferService;
@@ -38,6 +41,8 @@ public class IotController {
         this.dataMapper = dataMapper;
         this.productMapper = productMapper;
         this.commandService = commandService;
+        this.shadowService = shadowService;
+        this.deadbandFilter = deadbandFilter;
     }
 
     // ---------- 设备 CRUD ----------
@@ -144,7 +149,7 @@ public class IotController {
 
     // ---------- 指令下发（Downlink） ----------
 
-    public record CommandBody(String commandJson) {}
+    public record CommandBody(String commandJson, String idempotencyKey) {}
 
     @PostMapping("/devices/{deviceId}/command")
     public ApiResponse<IotCommandService.CommandResult> sendCommand(
@@ -154,7 +159,17 @@ public class IotController {
         if (body.commandJson() == null || body.commandJson().isBlank()) {
             throw new IllegalArgumentException("指令内容不能为空");
         }
-        return ApiResponse.success(commandService.send(tenantId, deviceId, body.commandJson()));
+        return ApiResponse.success(commandService.send(tenantId, deviceId, body.commandJson(), body.idempotencyKey()));
+    }
+
+    // ---------- 设备影子 ----------
+
+    @GetMapping("/devices/{deviceId}/shadow")
+    public ApiResponse<IotDeviceShadow> deviceShadow(
+            @PathVariable("deviceId") String deviceId,
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId) {
+        deviceService.require(tenantId, deviceId);
+        return ApiResponse.success(shadowService.get(tenantId, deviceId));
     }
 
     @GetMapping("/devices/{deviceId}/commands")
@@ -171,27 +186,40 @@ public class IotController {
                              String collectedAt, List<IotIngestService.MetricPoint> metrics) {}
 
     @PostMapping("/ingest")
-    public ApiResponse<IotIngestService.IngestResult> ingest(@RequestBody IngestBody body) {
+    public ApiResponse<Map<String, Object>> ingest(@RequestBody IngestBody body) {
         IotDevice device = deviceService.require(
                 body.tenantId() == null ? "1001" : body.tenantId(), body.deviceId());
         IotIngestService.IngestRequest request = new IotIngestService.IngestRequest(
                 device.getTenantId(), device.getFarmId(), device.getDeviceId(),
                 body.collectedAt(), body.metrics());
         IotIngestService.IngestResult result = ingestService.ingest(request);
-        // 正常指标点走缓冲批量刷盘（与压测/批量链路一致），异常事件由 ingest 即时落库
+        // 变化上报死区：抖动值不持久化（异常值豁免；心跳兜底见 IotDeadbandFilter）
+        LocalDateTime collectedAt = body.collectedAt() != null && !body.collectedAt().isBlank()
+                ? LocalDateTime.parse(body.collectedAt().replace(' ', 'T'))
+                : LocalDateTime.now();
+        int persisted = 0;
         for (var metric : body.metrics()) {
-            if (result.anomalies().stream().noneMatch(a -> a.getMetric().equals(metric.metric()))) {
+            boolean isAnomaly = result.anomalies().stream().anyMatch(a -> a.getMetric().equals(metric.metric()));
+            if (deadbandFilter.shouldPersist(device.getDeviceId(), metric.metric(), metric.value(), isAnomaly)) {
                 bufferService.offer(IotDeviceData.builder()
                         .tenantId(device.getTenantId()).farmId(device.getFarmId()).deviceId(device.getDeviceId())
                         .metric(metric.metric()).metricValue(metric.value()).unit(metric.unit())
-                        .collectedAt(body.collectedAt() != null && !body.collectedAt().isBlank()
-                                ? LocalDateTime.parse(body.collectedAt().replace(' ', 'T'))
-                                : LocalDateTime.now())
+                        .collectedAt(collectedAt)
                         .ingestTime(LocalDateTime.now())
                         .build());
+                persisted++;
+            } else {
+                deadbandFilter.recordFiltered();
             }
         }
-        return ApiResponse.success(result);
+        // 设备影子：合并 reported；若设备离线期间有漏执行的期望指令，返回 pending 让设备补执行
+        String pendingDesired = shadowService.mergeReported(device.getTenantId(), device.getDeviceId(), body.metrics());
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("pointsSaved", persisted);
+        payload.put("filteredByDeadband", body.metrics().size() - persisted);
+        payload.put("anomalies", result.anomalies());
+        payload.put("pendingDesired", pendingDesired == null ? "" : pendingDesired);
+        return ApiResponse.success(payload);
     }
 
     /** 网关汇聚批量上报：一次最多 10000 点，进缓冲队列由刷盘器批量写库。 */
@@ -287,6 +315,7 @@ public class IotController {
                 "flushed", bufferService.totalFlushed(),
                 "dropped", bufferService.totalDropped(),
                 "lastFlushSize", bufferService.lastFlushSize(),
-                "lastFlushMs", bufferService.lastFlushMs()));
+                "lastFlushMs", bufferService.lastFlushMs(),
+                "deadbandFiltered", deadbandFilter.filteredCount()));
     }
 }

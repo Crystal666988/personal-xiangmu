@@ -53,6 +53,17 @@ public class IotIngestService {
                 ? LocalDateTime.parse(request.collectedAt().replace(' ', 'T'))
                 : LocalDateTime.now();
 
+        // 时钟校验：设备本地时钟漂移防护——未来超过 10 分钟或早于 7 天的采集时间直接拒绝
+        // (乱序/漂移时间会写错按天分区，且污染按日聚合口径)
+        LocalDateTime now = LocalDateTime.now();
+        if (collectedAt.isAfter(now.plusMinutes(10))) {
+            throw new IllegalArgumentException("设备时钟漂移: 采集时间 " + collectedAt
+                    + " 超前当前时间超过 10 分钟，请校准设备 NTP");
+        }
+        if (collectedAt.isBefore(now.minusDays(7))) {
+            throw new IllegalArgumentException("采集时间 " + collectedAt + " 早于 7 天前 (超出分区保留窗口)，已拒绝");
+        }
+
         // 数据中断检测：与该设备上次上报间隔超阈值 → 掉线异常
         LocalDateTime lastSeen = lastSeenBefore(request.deviceId(), collectedAt);
         List<IotAnomalyEvent> anomalies = new ArrayList<>();

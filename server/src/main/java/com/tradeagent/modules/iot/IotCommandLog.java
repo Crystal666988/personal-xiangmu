@@ -23,5 +23,7 @@ public class IotCommandLog {
     private String deviceId;
     private String commandJson;
     private String state;
+    /** 幂等键 (设备/网关 messageId) */
+    private String idempotencyKey;
     private LocalDateTime createTime;
 }
