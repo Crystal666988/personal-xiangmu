@@ -76,6 +76,10 @@ feishu:
   app-secret: ${FEISHU_APP_SECRET:}
   bitable-app-token: ${FEISHU_BITABLE_APP_TOKEN:}
   bitable-table-id: ${FEISHU_BITABLE_TABLE_ID:}
+  bitable-poll-enabled: ${FEISHU_BITABLE_POLL_ENABLED:false}  # 表格新增商机行→自动背调回写
+  bitable-watch-field: ${FEISHU_BITABLE_WATCH_FIELD:商机公司}
+  jwt-secret: ${FEISHU_JWT_SECRET:tradeagent-demo-secret-key-change-me-0123456789abcdef}
+  jwt-expire-minutes: ${FEISHU_JWT_EXPIRE_MINUTES:720}
 
 # Cross-Encoder 语义二次精排 (任务七)：DashScope gte-rerank-v2；未配置 Key 或调用失败时自动回退融合排序
 rag:
