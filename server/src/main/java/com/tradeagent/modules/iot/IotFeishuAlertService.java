@@ -47,13 +47,18 @@ public class IotFeishuAlertService {
      * @return 卡片推送状态（SENT / SKIPPED_NO_WEBHOOK / FAILED）
      */
     public AlertResult pushAnomalyAlert(String farmId, String deviceId, List<IotAnomalyEvent> anomalies) {
+        return pushAnomalyAlert(farmId, deviceId, anomalies, deviceId, farmId);
+    }
+
+    public AlertResult pushAnomalyAlert(String farmId, String deviceId, List<IotAnomalyEvent> anomalies,
+                                        String deviceName, String location) {
         if (webhookUrl == null || webhookUrl.isBlank()) {
             log.info("【IoT 预警】未配置飞书群机器人 Webhook，{} 条异常仅落库 (设备 {})", anomalies.size(), deviceId);
             return new AlertResult(AlertState.SKIPPED_NO_WEBHOOK, "未配置 feishu.iot-alert-webhook-url");
         }
         try {
             StringBuilder md = new StringBuilder();
-            md.append("**设备**: ").append(deviceName).append(" ｜ **地区**: ").append(location).append("\n");
+            md.append("**设备**: ").append(deviceName).append(" | **地区**: ").append(location).append("\n");
             md.append("**时间**: ").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
             for (IotAnomalyEvent event : anomalies) {
                 String level = "CRITICAL".equals(event.getSeverity()) ? "【紧急】" : "【观察】";

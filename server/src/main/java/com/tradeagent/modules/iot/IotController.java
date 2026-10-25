@@ -29,13 +29,15 @@ public class IotController {
     private final IotDeadbandFilter deadbandFilter;
     private final IotOtaService otaService;
     private final IotDownsamplingService downsamplingService;
+    private final IotDailySummaryService dailySummaryService;
 
     public IotController(IotDeviceService deviceService, IotIngestService ingestService,
                          IotDataBufferService bufferService, IotLoadSimulatorService loadSimulator,
                          IotAnomalyEventMapper anomalyMapper, IotDeviceDataMapper dataMapper,
                          IotProductMapper productMapper, IotCommandService commandService,
                          IotShadowService shadowService, IotDeadbandFilter deadbandFilter,
-                         IotOtaService otaService, IotDownsamplingService downsamplingService) {
+                         IotOtaService otaService, IotDownsamplingService downsamplingService,
+                         IotDailySummaryService dailySummaryService) {
         this.deviceService = deviceService;
         this.ingestService = ingestService;
         this.bufferService = bufferService;
@@ -48,6 +50,7 @@ public class IotController {
         this.deadbandFilter = deadbandFilter;
         this.otaService = otaService;
         this.downsamplingService = downsamplingService;
+        this.dailySummaryService = dailySummaryService;
     }
 
     // ---------- 设备 CRUD ----------
@@ -288,6 +291,17 @@ public class IotController {
                 .eq(IotDeviceData::getDeviceId, deviceId)
                 .orderByDesc(IotDeviceData::getCollectedAt)
                 .last("LIMIT " + Math.min(Math.max(limit, 1), 500))));
+    }
+
+    // ---------- 每日设备总结 → 飞书多维表格 ----------
+
+    @PostMapping("/summary/now")
+    public ApiResponse<String> summaryNow(
+            @RequestParam(value = "tenantId", defaultValue = "1001") String tenantId,
+            @RequestParam(value = "date", required = false) String date) {
+        java.time.LocalDate day = date != null && !date.isBlank()
+                ? java.time.LocalDate.parse(date) : java.time.LocalDate.now();
+        return ApiResponse.success(dailySummaryService.summarizeAndPush(day, tenantId));
     }
 
     // ---------- 难点5: 冷热分层降采样 ----------
