@@ -40,8 +40,13 @@ public class IotIngestService {
     /** 上报载荷：一次上报可带多个指标（环控器一次上温湿度氨气一组）。 */
     public record MetricPoint(String metric, Double value, String unit) {}
 
-    public record IngestRequest(String tenantId, String farmId, String deviceId,
-                                String collectedAt, List<MetricPoint> metrics) {}
+    public record IngestRequest(String tenantId, String farmId, String deviceId, String deviceName, String location,
+                                String collectedAt, List<MetricPoint> metrics) {
+        public IngestRequest(String tenantId, String farmId, String deviceId,
+                             String collectedAt, List<MetricPoint> metrics) {
+            this(tenantId, farmId, deviceId, deviceId, farmId, collectedAt, metrics);
+        }
+    }
 
     public record IngestResult(int pointsSaved, List<IotAnomalyEvent> anomalies,
                                IotFeishuAlertService.AlertResult alertResult) {}
@@ -110,7 +115,8 @@ public class IotIngestService {
                 }
             }
             if (!alertable.isEmpty()) {
-            var alert = alertService.pushAnomalyAlert(request.farmId(), request.deviceId(), alertable);
+            var alert = alertService.pushAnomalyAlert(request.farmId(), request.deviceId(), alertable,
+                    request.deviceName(), request.location());
             alertable.forEach(a -> {
                 a.setFeishuState(alert.state().name());
                 if (a.getId() != null) {

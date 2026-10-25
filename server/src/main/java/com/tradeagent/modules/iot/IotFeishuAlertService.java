@@ -53,9 +53,11 @@ public class IotFeishuAlertService {
         }
         try {
             StringBuilder md = new StringBuilder();
+            md.append("**设备**: ").append(deviceName).append(" ｜ **地区**: ").append(location).append("\n");
+            md.append("**时间**: ").append(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))).append("\n");
             for (IotAnomalyEvent event : anomalies) {
-                md.append(String.format("**%s**: %s（当前 %.1f）\n",
-                        metricLabel(event.getMetric()), event.getMessage(), event.getMetricValue()));
+                String level = "CRITICAL".equals(event.getSeverity()) ? "【紧急】" : "【观察】";
+                md.append(level).append(event.getMessage()).append("\n");
             }
             Map<String, Object> header = new LinkedHashMap<>();
             header.put("title", Map.of("tag", "plain_text", "content", "畜禽舍环境异常预警 · 需人工确认"));
@@ -72,7 +74,7 @@ public class IotFeishuAlertService {
 
             Map<String, Object> mdTextMap = new LinkedHashMap<>();
             mdTextMap.put("tag", "lark_md");
-            mdTextMap.put("content", String.format("**栋舍**: %s\\n**设备**: %s\\n%s", farmId, deviceId, md));
+            mdTextMap.put("content", md.toString());
             Map<String, Object> mdElement = new LinkedHashMap<>();
             mdElement.put("tag", "div");
             mdElement.put("text", mdTextMap);

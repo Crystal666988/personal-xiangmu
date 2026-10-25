@@ -169,11 +169,9 @@ public class IotDailySummaryService {
             for (Map<String, Object> row : summary) {
                 Map<String, Object> fields = new LinkedHashMap<>();
                 fields.put("日期", date.toString());
-                fields.put("栋舍", String.valueOf(row.get("farmId")));
-                fields.put("设备", String.valueOf(row.get("deviceId")));
-                fields.put("上报点数", String.valueOf(row.get("points")));
-                fields.put("指标区间", String.valueOf(row.get("ranges")));
-                fields.put("异常数", String.valueOf(row.get("anomalyCount")));
+                fields.put("文本", String.format("%s %s | 点数%s | 指标%s | 异常%s",
+                        row.get("farmId"), row.get("deviceId"), row.get("points"),
+                        row.get("ranges"), row.get("anomalyCount")));
                 @SuppressWarnings("unchecked")
                 Map<String, Object> body = Map.of(
                         "fields", fields);
