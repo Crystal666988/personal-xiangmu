@@ -28,6 +28,12 @@ export const useUserStore = defineStore('user', {
       }
       throw new Error(res.message || '登录失败')
     },
+    setToken(token, user) {
+      this.token = token
+      this.userInfo = user || { username: '飞书用户' }
+      localStorage.setItem('tradeagent_token', this.token)
+      localStorage.setItem('tradeagent_user', JSON.stringify(this.userInfo))
+    },
     logout() {
       this.token = ''
       this.userInfo = null

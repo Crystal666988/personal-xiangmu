@@ -67,6 +67,22 @@
         </el-button>
       </el-form-item>
 
+      <!-- 飞书扫码登录 (SSO) -->
+      <el-divider style="margin: 14px 0 10px">或</el-divider>
+      <el-button
+        size="large"
+        style="width:100%;"
+        plain
+        :loading="feishuLoading"
+        @click.prevent="feishuLogin"
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" style="margin-right:6px;vertical-align:-4px;fill:#3370ff">
+          <path d="M3.9 12c0-1.7 1.4-3.1 3.1-3.1s3.1 1.4 3.1 3.1-1.4 3.1-3.1 3.1S3.9 13.7 3.9 12zM13.9 5.5c0-1.7 1.4-3.1 3.1-3.1s3.1 1.4 3.1 3.1-1.4 3.1-3.1 3.1-3.1-1.4-3.1-3.1zM13.9 18.5c0-1.7 1.4-3.1 3.1-3.1s3.1 1.4 3.1 3.1-1.4 3.1-3.1 3.1-3.1-1.4-3.1-3.1zM6.1 12h2.2m1.8 0h1.2m-1.2 0 5.1-4.7m-5.1 9.4 5.1-4.7"/>
+        </svg>
+        <span v-if="!feishuLoading">飞书扫码登录</span>
+        <span v-else>跳转飞书授权中...</span>
+      </el-button>
+
       <div class="login-tip">
         <span>演示账号：admin / admin123</span>
       </div>
@@ -85,9 +101,64 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Key } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import request from '@/utils/request'
 
 const router = useRouter()
 const userStore = useUserStore()
+
+const feishuLoading = ref(false)
+
+// 飞书扫码 SSO: 跳转授权页, 回调带 code 回来换 JWT
+const feishuLogin = async () => {
+  feishuLoading.value = true
+  try {
+    const redirectUri = encodeURIComponent(window.location.origin + '/login?feishu=1')
+    const res = await request({
+      url: '/api/v1/feishu/auth/authorize-url',
+      baseURL: '',
+      method: 'get',
+      params: { redirectUri }
+    })
+    if (res.code === 200 && res.data && res.data.authorizeUrl) {
+      window.location.href = res.data.authorizeUrl
+    } else {
+      ElMessage.warning((res && res.message) || 'SSO 未配置或不可用，请用账号登录')
+      feishuLoading.value = false
+    }
+  } catch (e) {
+    ElMessage.error('获取飞书授权地址失败')
+    feishuLoading.value = false
+  }
+}
+
+// OAuth 回调: URL 带 ?feishu=1&code=xxx 时静默换 JWT 登录
+const handleFeishuCallback = async () => {
+  const params = new URLSearchParams(window.location.search)
+  const code = params.get('code')
+  if (!code || params.get('feishu') !== '1') return
+  feishuLoading.value = true
+  try {
+    const res = await request({
+      url: '/api/v1/feishu/auth/callback',
+      baseURL: '',
+      method: 'post',
+      data: { code }
+    })
+    if (res.code === 200 && res.data && res.data.token) {
+      userStore.setToken(res.data.token, { username: res.data.name })
+      ElMessage.success('飞书登录成功: ' + res.data.name)
+      router.push('/')
+      return
+    }
+    ElMessage.warning((res && res.message) || '飞书授权码已失效，请重新扫码')
+  } catch (e) {
+    ElMessage.error('飞书登录失败: ' + (e.message || ''))
+  } finally {
+    feishuLoading.value = false
+    // 清掉 URL 上的 code 参数防止刷新重复消费
+    window.history.replaceState({}, '', '/login')
+  }
+}
 
 const loginRef = ref(null)
 const captchaCanvasRef = ref(null)
@@ -162,6 +233,7 @@ const getCode = () => {
 }
 
 onMounted(() => {
+  handleFeishuCallback()
   getCode()
 })
 
