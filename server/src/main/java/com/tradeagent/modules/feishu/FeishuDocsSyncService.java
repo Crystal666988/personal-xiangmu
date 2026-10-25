@@ -27,6 +27,9 @@ public class FeishuDocsSyncService {
     @Resource
     private AstMarkdownChunker astMarkdownChunker;
 
+    @Resource
+    private FeishuOpenApiClient feishuOpenApiClient;
+
     /**
      * 同步指定飞书文档至本地向量知识库
      *
@@ -37,15 +40,18 @@ public class FeishuDocsSyncService {
     public int syncFeishuDocumentToRag(String documentToken, Long documentId) {
         log.info("【飞书文档同步】开始从飞书开放平台拉取云文档: [{}]...", documentToken);
 
-        // 步骤 1: 模拟从飞书开放平台拉取富文本 Block 并拼接为标准 Markdown (GET /open-apis/docx/v1/documents/{document_id}/blocks)
-        String feishuMarkdownContent = mockPullFeishuDocAsMarkdown(documentToken);
+        // 步骤 1: 真实拉取飞书云文档 (raw_content); 未配置凭证/失败时回退固定样例并明示演示
+        String real = feishuOpenApiClient.fetchDocumentRawContent(documentToken);
+        boolean isReal = real != null && !real.isBlank();
+        String feishuMarkdownContent = isReal ? real : mockPullFeishuDocAsMarkdown(documentToken);
+        log.info("【飞书文档同步】数据来源: {} (字符数: {})", isReal ? "真实开放平台 API" : "演示样例(未配置凭证)", feishuMarkdownContent.length());
         log.info("【飞书文档同步】文档拉取成功，获得原始文本字符数: {}", feishuMarkdownContent.length());
 
         // 步骤 2: 交由自研的 AST 语法切片器进行智能切片 (保留标题面包屑与表格三元组)
         List<DocumentChunk> chunks = astMarkdownChunker.split(documentId, feishuMarkdownContent);
 
         // 步骤 3: 模拟批量写入 Milvus / 向量库
-        log.info("【飞书文档同步】成功将飞书云文档切分为 {} 个结构化 Chunk，已写入向量索引！", chunks.size());
+        log.info("【飞书文档同步】成功切分为 {} 个 Chunk（真实数据: {}）", chunks.size(), isReal);
         return chunks.size();
     }
 

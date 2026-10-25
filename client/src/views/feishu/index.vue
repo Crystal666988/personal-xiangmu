@@ -1,5 +1,28 @@
 <template>
   <div class="feishu-container">
+    <!-- 连接状态 -->
+    <el-card shadow="never" class="box-card">
+      <template #header>
+        <div class="card-title-bar">
+          <span class="title-text"><el-icon><Connection /></el-icon> 飞书连接状态</span>
+          <el-button size="small" :loading="statusLoading" @click="loadStatus"><el-icon><Refresh /></el-icon> 重新检测</el-button>
+        </div>
+      </template>
+      <el-descriptions :column="2" border size="small">
+        <el-descriptions-item label="群机器人 Webhook (IoT 预警)">
+          <el-tag size="small" :type="status.webhookConfigured ? 'success' : 'info'">
+            {{ status.webhookConfigured ? '已配置 (预警卡片真实推送)' : '未配置 (FEISHU_IOT_ALERT_WEBHOOK_URL)' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="自建应用凭证 (文档拉取 / Bitable)">
+          <el-tag size="small" :type="status.tokenOk ? 'success' : status.appConfigured ? 'danger' : 'info'">
+            {{ status.tokenOk ? '有效' : status.appConfigured ? '凭证无效' : '未配置' }}
+          </el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <div class="conn-tip">{{ status.appDetail }}</div>
+    </el-card>
+
     <!-- 常见飞书应用场景（蹭风口清单） -->
     <el-card shadow="never" class="box-card">
       <template #header>
@@ -93,10 +116,11 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Promotion, Refresh, Tickets } from '@element-plus/icons-vue'
+import { Connection, Document, Promotion, Refresh, Tickets } from '@element-plus/icons-vue'
 import { feishuDocsSyncApi, feishuBitableWebhookApi } from '@/api/feishu'
+import request from '@/utils/request'
 
 const scenarios = [
   { name: '云文档 → RAG 知识库', desc: '飞书 Docs 增量拉取，AST 切片后进向量库，群内/对话直接问答企业知识', need: '自建应用 + 文档读权限', demo: true },
@@ -107,6 +131,17 @@ const scenarios = [
   { name: '把本 Agent 接进飞书对话', desc: '企业自建应用长连接（WebSocket），在飞书聊天里直接 @ 本系统问答', need: '自建应用 + 事件订阅长连接', demo: false },
   { name: '每日外贸战报定时推送', desc: '定时任务聚合汇率、海关动态、公海客户数据，生成卡片推送到管理层群', need: '群机器人 + 定时任务', demo: false }
 ]
+
+const status = reactive({ appConfigured: false, tokenOk: false, appDetail: '检测中...', webhookConfigured: false })
+const statusLoading = ref(false)
+const loadStatus = async () => {
+  statusLoading.value = true
+  try {
+    const res = await request({ url: '/api/v1/feishu/status', baseURL: '', method: 'get' })
+    Object.assign(status, res.data || {})
+  } finally { statusLoading.value = false }
+}
+onMounted(loadStatus)
 
 const docsForm = reactive({ documentToken: 'doxcnABC123456', documentId: 1001 })
 const bitableForm = reactive({ recordId: 'rec_demo_001', companyName: 'Al-Futtaim Solar Energy', website: 'https://al-futtaim-solar.ae' })
@@ -218,5 +253,12 @@ const runBitable = async () => {
   color: #909399;
   line-height: 1.6;
   padding: 0 4px;
+}
+
+.conn-tip {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
 }
 </style>
