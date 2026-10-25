@@ -66,7 +66,7 @@ class IotThresholdRuleEngineTest {
 
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(null);
 
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor());
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor(), d -> {});
 
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_env_01",
                 LocalDateTime.now().toString(),
@@ -100,7 +100,7 @@ class IotThresholdRuleEngineTest {
         Mockito.when(dataMapper.selectOne(Mockito.any())).thenReturn(
                 IotDeviceData.builder().deviceId("dev_x").collectedAt(lastSeen).build());
 
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor());
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alertService, new IotAlarmSuppressor(), d -> {});
         var request = new IotIngestService.IngestRequest("1001", "farm_001", "dev_x",
                 LocalDateTime.now().toString(),
                 List.of(new IotIngestService.MetricPoint("temperature", 25.0, "℃")));

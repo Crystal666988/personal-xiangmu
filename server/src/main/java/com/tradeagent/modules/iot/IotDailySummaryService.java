@@ -33,10 +33,10 @@ import java.util.Map;
 @Service
 public class IotDailySummaryService {
 
-    private final IotDeviceDataMapper dataMapper;
     private final IotAnomalyEventMapper anomalyMapper;
     private final IotDailySummaryMapper summaryMapper;
     private final IotThresholdRuleEngine ruleEngine;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -54,60 +54,72 @@ public class IotDailySummaryService {
     @Value("${feishu.bitable-table-id:}")
     private String bitableTableId;
 
-    public IotDailySummaryService(IotDeviceDataMapper dataMapper, IotAnomalyEventMapper anomalyMapper,
-                                  IotDailySummaryMapper summaryMapper, IotThresholdRuleEngine ruleEngine) {
-        this.dataMapper = dataMapper;
+    public IotDailySummaryService(IotAnomalyEventMapper anomalyMapper,
+                                  IotDailySummaryMapper summaryMapper, IotThresholdRuleEngine ruleEngine,
+                                  org.springframework.beans.factory.ObjectProvider<org.springframework.jdbc.core.JdbcTemplate> jdbcProvider) {
         this.anomalyMapper = anomalyMapper;
         this.summaryMapper = summaryMapper;
         this.ruleEngine = ruleEngine;
+        this.jdbc = jdbcProvider.getIfAvailable();
     }
 
-    /** 按天聚合（简单聚合在 SQL 侧做不完 min/max 分指标，此处内存聚合，量级为天 × 设备，可承受）。 */
+    /** 按天聚合：SQL 侧 GROUP BY（45 万压测数据也不能拖垮内存聚合——日报必须始终秒级）。 */
     public List<Map<String, Object>> summarize(LocalDate date, String tenantId) {
         LocalDateTime dayStart = date.atStartOfDay();
         LocalDateTime dayEnd = date.plusDays(1).atStartOfDay();
-        List<IotDeviceData> points = dataMapper.selectList(new LambdaQueryWrapper<IotDeviceData>()
-                .eq(IotDeviceData::getTenantId, tenantId)
-                .ge(IotDeviceData::getCollectedAt, dayStart)
-                .lt(IotDeviceData::getCollectedAt, dayEnd));
-        List<IotAnomalyEvent> anomalies = anomalyMapper.selectList(new LambdaQueryWrapper<IotAnomalyEvent>()
-                .eq(IotAnomalyEvent::getTenantId, tenantId)
-                .ge(IotAnomalyEvent::getCreateTime, dayStart)
-                .lt(IotAnomalyEvent::getCreateTime, dayEnd));
+        if (jdbc == null) return List.of();
+
+        // 指标区间: 数据库聚合 min/max/avg/count
+        List<Map<String, Object>> agg = jdbc.queryForList("""
+                SELECT device_id, MIN(farm_id) AS farm_id, metric,
+                       MIN(metric_value) AS min_v, MAX(metric_value) AS max_v,
+                       AVG(metric_value) AS avg_v, COUNT(*) AS cnt
+                FROM iot_device_data
+                WHERE tenant_id = ? AND collected_at >= ? AND collected_at < ?
+                GROUP BY device_id, metric
+                """, tenantId, dayStart, dayEnd);
+
+        // 异常数: 数据库聚合
+        List<Map<String, Object>> anomalies = jdbc.queryForList("""
+                SELECT device_id, COUNT(*) AS cnt
+                FROM iot_anomaly_event
+                WHERE tenant_id = ? AND create_time >= ? AND create_time < ?
+                GROUP BY device_id
+                """, tenantId, dayStart, dayEnd);
+
+        Map<String, Long> anomalyByDevice = new LinkedHashMap<>();
+        anomalies.forEach(a -> anomalyByDevice.put(String.valueOf(a.get("device_id")),
+                ((Number) a.get("cnt")).longValue()));
 
         Map<String, Map<String, Object>> byDevice = new LinkedHashMap<>();
-        for (IotDeviceData point : points) {
-            byDevice.computeIfAbsent(point.getDeviceId(), k -> {
+        for (Map<String, Object> row : agg) {
+            String deviceId = String.valueOf(row.get("device_id"));
+            Map<String, Object> device = byDevice.computeIfAbsent(deviceId, k -> {
                 Map<String, Object> m = new LinkedHashMap<>();
-                m.put("farmId", point.getFarmId());
-                m.put("metrics", new LinkedHashMap<String, List<Double>>());
+                m.put("farmId", String.valueOf(row.get("farm_id")));
+                m.put("ranges", new LinkedHashMap<String, String>());
+                m.put("points", 0L);
                 return m;
             });
             @SuppressWarnings("unchecked")
-            Map<String, List<Double>> metrics = (Map<String, List<Double>>) byDevice.get(point.getDeviceId()).get("metrics");
-            metrics.computeIfAbsent(point.getMetric(), k -> new ArrayList<>()).add(point.getMetricValue());
+            Map<String, String> ranges = (Map<String, String>) device.get("ranges");
+            ranges.put(ruleEngine.labelOf(String.valueOf(row.get("metric"))),
+                    String.format("%.1f~%.1f (均值 %.1f)",
+                            ((Number) row.get("min_v")).doubleValue(),
+                            ((Number) row.get("max_v")).doubleValue(),
+                            ((Number) row.get("avg_v")).doubleValue()));
+            device.put("points", ((Number) device.get("points")).longValue()
+                    + ((Number) row.get("cnt")).longValue());
         }
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (var entry : byDevice.entrySet()) {
-            long anomalyCount = anomalies.stream()
-                    .filter(a -> entry.getKey().equals(a.getDeviceId()))
-                    .count();
-            Map<String, Object> ranges = new LinkedHashMap<>();
-            @SuppressWarnings("unchecked")
-            Map<String, List<Double>> metrics = (Map<String, List<Double>>) entry.getValue().get("metrics");
-            metrics.forEach((metric, values) -> {
-                double min = values.stream().mapToDouble(Double::doubleValue).min().orElse(0);
-                double max = values.stream().mapToDouble(Double::doubleValue).max().orElse(0);
-                double avg = values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-                ranges.put(ruleEngine.labelOf(metric), String.format("%.1f~%.1f (均值 %.1f)", min, max, avg));
-            });
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("farmId", entry.getValue().get("farmId"));
             row.put("deviceId", entry.getKey());
-            row.put("points", points.stream().filter(p -> entry.getKey().equals(p.getDeviceId())).count());
-            row.put("ranges", ranges);
-            row.put("anomalyCount", anomalyCount);
+            row.put("points", entry.getValue().get("points"));
+            row.put("ranges", entry.getValue().get("ranges"));
+            row.put("anomalyCount", anomalyByDevice.getOrDefault(entry.getKey(), 0L));
             result.add(row);
         }
         return result;
@@ -146,7 +158,19 @@ public class IotDailySummaryService {
                 .summaryJson(summaryJson).feishuState(feishuState)
                 .createTime(LocalDateTime.now())
                 .build();
-        summaryMapper.insert(entity);
+        // 同日重跑幂等: 唯一键冲突时更新已有行而不是报错
+        try {
+            summaryMapper.insert(entity);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            IotDailySummary exist = summaryMapper.selectOne(new LambdaQueryWrapper<IotDailySummary>()
+                    .eq(IotDailySummary::getTenantId, tenantId).eq(IotDailySummary::getFarmId, "ALL")
+                    .eq(IotDailySummary::getSummaryDate, date));
+            if (exist != null) {
+                exist.setSummaryJson(summaryJson);
+                exist.setFeishuState(feishuState);
+                summaryMapper.updateById(exist);
+            }
+        }
         return feishuState;
     }
 
@@ -166,12 +190,21 @@ public class IotDailySummaryService {
                 log.warn("【IoT 日报】获取 tenant_access_token 失败: {}", tokenResp.body());
                 return "FAILED";
             }
-            for (Map<String, Object> row : summary) {
+            // 日报推送限量: 只推有异常或数据量最大的前 20 台设备 (504 台全推会打爆飞书 API 限流)
+            List<Map<String, Object>> top = summary.stream()
+                    .sorted((a, b) -> Long.compare(
+                            Long.parseLong(String.valueOf(b.getOrDefault("anomalyCount", 0))),
+                            Long.parseLong(String.valueOf(a.getOrDefault("anomalyCount", 0)))))
+                    .limit(20)
+                    .toList();
+            for (Map<String, Object> row : top) {
+                // 一列一字段: 设备名/地区/报错信息/日期(毫秒时间戳=含时分秒); 飞书自动忽略表中不存在的列
                 Map<String, Object> fields = new LinkedHashMap<>();
-                fields.put("日期", date.toString());
-                fields.put("文本", String.format("%s %s | 点数%s | 指标%s | 异常%s",
-                        row.get("farmId"), row.get("deviceId"), row.get("points"),
-                        row.get("ranges"), row.get("anomalyCount")));
+                fields.put("设备名", String.valueOf(row.get("deviceId")));
+                fields.put("地区", String.valueOf(row.get("farmId")));
+                fields.put("报错信息", String.format("点数:%s 指标:%s 异常:%s",
+                        row.get("points"), row.get("ranges"), row.get("anomalyCount")));
+                fields.put("日期", System.currentTimeMillis());
                 @SuppressWarnings("unchecked")
                 Map<String, Object> body = Map.of(
                         "fields", fields);

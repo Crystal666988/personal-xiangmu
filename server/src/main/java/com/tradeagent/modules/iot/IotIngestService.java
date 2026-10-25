@@ -26,15 +26,18 @@ public class IotIngestService {
     private final IotThresholdRuleEngine ruleEngine;
     private final IotFeishuAlertService alertService;
     private final IotAlarmSuppressor alarmSuppressor;
+    private final IotDeviceEventPublisher eventPublisher;
 
     public IotIngestService(IotDeviceDataMapper dataMapper,
                             IotAnomalyEventMapper anomalyMapper, IotThresholdRuleEngine ruleEngine,
-                            IotFeishuAlertService alertService, IotAlarmSuppressor alarmSuppressor) {
+                            IotFeishuAlertService alertService, IotAlarmSuppressor alarmSuppressor,
+                            IotDeviceEventPublisher eventPublisher) {
         this.dataMapper = dataMapper;
         this.anomalyMapper = anomalyMapper;
         this.ruleEngine = ruleEngine;
         this.alertService = alertService;
         this.alarmSuppressor = alarmSuppressor;
+        this.eventPublisher = eventPublisher;
     }
 
     /** 上报载荷：一次上报可带多个指标（环控器一次上温湿度氨气一组）。 */
@@ -87,11 +90,13 @@ public class IotIngestService {
         int saved = 0;
         for (MetricPoint point : request.metrics()) {
             if (point.metric() == null || point.value() == null) continue;
-            dataMapper.insert(IotDeviceData.builder()
+            IotDeviceData dataPoint = IotDeviceData.builder()
                     .tenantId(request.tenantId()).farmId(request.farmId()).deviceId(request.deviceId())
                     .metric(point.metric()).metricValue(point.value()).unit(point.unit())
                     .collectedAt(collectedAt).ingestTime(LocalDateTime.now())
-                    .build());
+                    .build();
+            dataMapper.insert(dataPoint);
+            eventPublisher.publish(dataPoint);  // Kafka 转发 (HTTP/MQTT 双入口汇合点)
             saved++;
             ruleEngine.evaluate(point.metric(), point.value()).forEach(eval ->
                     allAnomalies.add(IotAnomalyEvent.builder()

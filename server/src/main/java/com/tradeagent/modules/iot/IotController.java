@@ -30,6 +30,7 @@ public class IotController {
     private final IotOtaService otaService;
     private final IotDownsamplingService downsamplingService;
     private final IotDailySummaryService dailySummaryService;
+    private final IotDeviceEventPublisher eventPublisher;
 
     public IotController(IotDeviceService deviceService, IotIngestService ingestService,
                          IotDataBufferService bufferService, IotLoadSimulatorService loadSimulator,
@@ -37,7 +38,8 @@ public class IotController {
                          IotProductMapper productMapper, IotCommandService commandService,
                          IotShadowService shadowService, IotDeadbandFilter deadbandFilter,
                          IotOtaService otaService, IotDownsamplingService downsamplingService,
-                         IotDailySummaryService dailySummaryService) {
+                         IotDailySummaryService dailySummaryService,
+                         IotDeviceEventPublisher eventPublisher) {
         this.deviceService = deviceService;
         this.ingestService = ingestService;
         this.bufferService = bufferService;
@@ -51,6 +53,7 @@ public class IotController {
         this.otaService = otaService;
         this.downsamplingService = downsamplingService;
         this.dailySummaryService = dailySummaryService;
+        this.eventPublisher = eventPublisher;
     }
 
     // ---------- 设备 CRUD ----------
@@ -215,12 +218,13 @@ public class IotController {
         for (var metric : body.metrics()) {
             boolean isAnomaly = result.anomalies().stream().anyMatch(a -> a.getMetric().equals(metric.metric()));
             if (deadbandFilter.shouldPersist(device.getDeviceId(), metric.metric(), metric.value(), isAnomaly)) {
-                bufferService.offer(IotDeviceData.builder()
+                IotDeviceData point = IotDeviceData.builder()
                         .tenantId(device.getTenantId()).farmId(device.getFarmId()).deviceId(device.getDeviceId())
                         .metric(metric.metric()).metricValue(metric.value()).unit(metric.unit())
                         .collectedAt(collectedAt)
                         .ingestTime(LocalDateTime.now())
-                        .build());
+                        .build();
+                bufferService.offer(point);
                 persisted++;
             } else {
                 deadbandFilter.recordFiltered();

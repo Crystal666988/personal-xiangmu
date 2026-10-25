@@ -87,10 +87,25 @@ public class IotFeishuAlertService {
             Map<String, Object> hrElement = new LinkedHashMap<>();
             hrElement.put("tag", "hr");
 
+            // 交互按钮(链接型): 回调型按钮需要公网回调地址, 本地环境用跳转链接诚实实现
+            Map<String, Object> btnDetail = new LinkedHashMap<>();
+            btnDetail.put("tag", "button");
+            btnDetail.put("text", Map.of("tag", "plain_text", "content", "查看设备详情"));
+            btnDetail.put("type", "primary");
+            btnDetail.put("url", "http://localhost:5173/iot");
+            Map<String, Object> btnGuide = new LinkedHashMap<>();
+            btnGuide.put("tag", "button");
+            btnGuide.put("text", Map.of("tag", "plain_text", "content", "高温处置流程"));
+            btnGuide.put("type", "default");
+            btnGuide.put("url", "https://feishu.cn");
+            Map<String, Object> actionElement = new LinkedHashMap<>();
+            actionElement.put("tag", "action");
+            actionElement.put("actions", List.of(btnDetail, btnGuide));
+
             Map<String, Object> card = new LinkedHashMap<>();
             card.put("config", Map.of("wide_screen_mode", true));
             card.put("header", header);
-            card.put("elements", List.of(mdElement, hrElement, noteElement));
+            card.put("elements", List.of(mdElement, actionElement, hrElement, noteElement));
 
             String body = objectMapper.writeValueAsString(Map.of("msg_type", "interactive", "card", card));
             HttpRequest request = HttpRequest.newBuilder()

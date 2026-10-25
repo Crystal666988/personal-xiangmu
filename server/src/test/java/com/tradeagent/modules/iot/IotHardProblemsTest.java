@@ -144,7 +144,7 @@ class IotHardProblemsTest {
         IotAnomalyEventMapper anomalyMapper = Mockito.mock(IotAnomalyEventMapper.class);
         IotThresholdRuleEngine engine = new IotThresholdRuleEngine();
         IotFeishuAlertService alert = new IotFeishuAlertService();
-        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alert, new IotAlarmSuppressor());
+        IotIngestService service = new IotIngestService(dataMapper, anomalyMapper, engine, alert, new IotAlarmSuppressor(), d -> {});
 
         // 未来 30 分钟 → 拒绝
         var future = new IotIngestService.IngestRequest("1001", "f", "d",
